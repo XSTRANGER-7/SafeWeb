@@ -47,4 +47,84 @@ async function postFIR(req, res) {
   return res.json({ ok: true, case: updated.data() });
 }
 
-module.exports = { updateCaseStatus, postFIR };
+async function createOfficial(req, res) {
+  // body: { email, password, name, role, officialId }
+  const { admin, db } = initFirebaseAdmin();
+  if (!admin || !db) {
+    return res.status(503).json({ 
+      error: 'Firebase Admin not initialized. Please check serviceAccountKey.json. Error: The service account key may be invalid or expired. Please download a new key from Firebase Console → Project Settings → Service Accounts → Generate New Private Key' 
+    });
+  }
+  
+  const { email, password, name, role, officialId } = req.body || {};
+  
+  // Validate inputs
+  if (!email || !password || !name || !role || !officialId) {
+    return res.status(400).json({ error: 'All fields are required: email, password, name, role, officialId' });
+  }
+  
+  if (role !== 'police' && role !== 'bank') {
+    return res.status(400).json({ error: 'Role must be either "police" or "bank"' });
+  }
+  
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  }
+  
+  try {
+    // Create user using Firebase Admin SDK
+    const userRecord = await admin.auth().createUser({
+      email: email,
+      password: password,
+      displayName: name,
+      emailVerified: false
+    });
+    
+    const userId = userRecord.uid;
+    
+    // Store official data in Firestore officials collection
+    const officialRef = db.collection('officials').doc(userId);
+    await officialRef.set({
+      email: email,
+      name: name,
+      role: role,
+      officialId: officialId,
+      createdAt: new Date().toISOString(),
+      createdBy: 'admin'
+    });
+    
+    // Also create user profile in users collection
+    const userRef = db.collection('users').doc(userId);
+    await userRef.set({
+      email: email,
+      name: name,
+      role: role,
+      officialId: officialId,
+      createdAt: new Date().toISOString()
+    });
+    
+    return res.json({
+      success: true,
+      message: `Successfully created ${role} account for ${name}`,
+      userId: userId,
+      email: email
+    });
+  } catch (error) {
+    console.error('Error creating official:', error);
+    
+    let errorMessage = 'Failed to create official account';
+    if (error.code === 'auth/email-already-exists') {
+      errorMessage = 'This email is already registered. Please use a different email.';
+    } else if (error.code === 'auth/invalid-email') {
+      errorMessage = 'Invalid email address format.';
+    } else if (error.code === 'auth/invalid-password') {
+      errorMessage = 'Password is too weak. Please use a stronger password.';
+    } else {
+      errorMessage = error.message || errorMessage;
+    }
+    
+    return res.status(400).json({ error: errorMessage });
+  }
+}
+
+module.exports = { updateCaseStatus, postFIR, createOfficial };

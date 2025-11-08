@@ -53,6 +53,18 @@ function initFirebaseAdmin() {
       if (error instanceof SyntaxError) {
         console.error('❌ Error: Invalid JSON in serviceAccountKey.json');
         console.error('Please ensure the file contains valid JSON from Firebase Console.');
+      } else if (error.message && (error.message.includes('invalid_grant') || error.message.includes('JWT'))) {
+        console.error('❌ Error: Firebase service account key is invalid or expired.');
+        console.error('');
+        console.error('Possible causes:');
+        console.error('  1. Server time is not synced - sync your system time');
+        console.error('  2. Service account key has been revoked or expired');
+        console.error('');
+        console.error('Solution: Download a new service account key:');
+        console.error('  1. Go to: https://console.firebase.google.com/project/safeweb-b3ea1/settings/serviceaccounts/adminsdk');
+        console.error('  2. Click "Generate new private key"');
+        console.error('  3. Replace backend/serviceAccountKey.json with the downloaded file');
+        console.error('  4. Restart the backend server');
       } else {
         console.error('❌ Error initializing Firebase Admin:', error.message);
       }

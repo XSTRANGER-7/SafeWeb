@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { db } from "../../firebase.js";
-import { collection, addDoc, doc, setDoc } from "firebase/firestore";
+import { collection, addDoc, doc, setDoc, query, where, onSnapshot, getDocs } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext.jsx";
 
 // Allowed file types for evidence uploads
@@ -50,9 +50,614 @@ function fileToBase64(file) {
   });
 }
 
-export default function ComplaintForm({ user: userProp }) {
-  const { user: userFromAuth, token } = useAuth();
-  const user = userProp || userFromAuth; // Use prop if provided, otherwise from context
+// Component to load and display evidence files from subcollection
+function EvidenceFilesList({ caseId, evidenceMetadata }) {
+  const [evidenceFiles, setEvidenceFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!caseId || !evidenceMetadata || evidenceMetadata.length === 0) {
+      setEvidenceFiles([]);
+      return;
+    }
+
+    // Load files from subcollection
+    async function loadFiles() {
+      setLoading(true);
+      try {
+        const evidenceCollection = collection(db, 'cases', caseId, 'evidence');
+        const snapshot = await getDocs(evidenceCollection);
+        const files = [];
+        snapshot.forEach((doc) => {
+          files.push({ id: doc.id, ...doc.data() });
+        });
+        setEvidenceFiles(files);
+      } catch (error) {
+        console.error('Error loading evidence files:', error);
+        // Fallback: use metadata if subcollection fails
+        setEvidenceFiles(evidenceMetadata.map((meta, idx) => ({ ...meta, id: idx })));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadFiles();
+  }, [caseId, evidenceMetadata]);
+
+  if (loading) {
+    return (
+      <div className="pt-4 border-t border-amber-200">
+        <span className="text-xs text-gray-500">Loading evidence files...</span>
+      </div>
+    );
+  }
+
+  if (!evidenceFiles || evidenceFiles.length === 0) {
+    return null;
+  }
+
+  const handleDownload = (fileItem) => {
+    try {
+      const fileName = fileItem.name || 'file';
+      const fileData = fileItem.data;
+      const contentType = fileItem.contentType || 'application/octet-stream';
+
+      // Handle URL format (old)
+      if (typeof fileItem === 'string' || (fileItem.url && !fileData)) {
+        window.open(fileItem.url || fileItem, '_blank');
+        return;
+      }
+
+      // Handle base64 data
+      if (fileData) {
+        const byteCharacters = atob(fileData);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: contentType });
+        
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      alert('Error downloading file. Please try again.');
+    }
+  };
+
+  return (
+    <div className="pt-4 border-t border-amber-200">
+      <span className="text-xs text-gray-600 mb-2 block">📎 Evidence Files ({evidenceFiles.length})</span>
+      <div className="flex flex-wrap gap-2">
+        {evidenceFiles.map((fileItem, idx) => {
+          const fileName = fileItem.name || `File ${idx + 1}`;
+          const isUrl = typeof fileItem === 'string' || fileItem.url;
+          
+          if (isUrl) {
+            return (
+              <a
+                key={fileItem.id || idx}
+                href={fileItem.url || fileItem}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs text-amber-800 transition-colors"
+                title={`Download ${fileName}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+                📄 {fileName}
+              </a>
+            );
+          }
+
+          return (
+            <button
+              key={fileItem.id || idx}
+              onClick={() => handleDownload(fileItem)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs text-amber-800 transition-colors cursor-pointer"
+              title={`Download ${fileName}`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+              📄 {fileName}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs text-gray-500 mt-2">
+        Click files to download evidence (stored in Firestore subcollection)
+      </p>
+    </div>
+  );
+}
+
+// Component to display cases list
+function CasesList({ user, profile, onSwitchToFile }) {
+  const [cases, setCases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedCase, setExpandedCase] = useState(null);
+
+  useEffect(() => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    let q;
+    if (profile?.role === 'normal' || !profile?.role) {
+      // Victims see only their own cases
+      q = query(collection(db, 'cases'), where('victimUid', '==', user.uid));
+    } else if (profile?.role === 'police') {
+      // Police see all cases
+      q = query(collection(db, 'cases'));
+    } else if (profile?.role === 'bank') {
+      // Bank sees all cases
+      q = query(collection(db, 'cases'));
+    }
+
+    if (!q) {
+      setLoading(false);
+      return;
+    }
+
+    const unsub = onSnapshot(q,
+      (snap) => {
+        const arr = [];
+        snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+        // Sort by createdAt descending
+        arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        setCases(arr);
+        setLoading(false);
+      },
+      (error) => {
+        console.error('Error fetching cases:', error);
+        setLoading(false);
+        if (error.code === 'permission-denied') {
+          console.warn('Permission denied. Please check Firestore security rules.');
+        } else if (error.code === 'failed-precondition') {
+          const indexUrl = error.message?.match(/https:\/\/[^\s]+/)?.[0];
+          if (indexUrl) {
+            alert(`Firestore index required. Visit: ${indexUrl}`);
+            window.open(indexUrl, '_blank');
+          }
+        }
+      }
+    );
+    return () => unsub();
+  }, [user, profile]);
+
+  const getStatusConfig = (status) => {
+    const configs = {
+      'Pending': {
+        bg: 'bg-amber-50',
+        text: 'text-amber-800',
+        border: 'border-amber-300',
+        icon: '⏳',
+        dot: 'bg-amber-500',
+        description: 'Your complaint has been received and is awaiting review'
+      },
+      'In Process': {
+        bg: 'bg-blue-50',
+        text: 'text-blue-800',
+        border: 'border-blue-300',
+        icon: '🔄',
+        dot: 'bg-blue-500',
+        description: 'Your complaint is being investigated by authorities'
+      },
+      'Funds Frozen': {
+        bg: 'bg-violet-50',
+        text: 'text-violet-800',
+        border: 'border-violet-300',
+        icon: '🔒',
+        dot: 'bg-violet-500',
+        description: 'Funds have been frozen pending investigation'
+      },
+      'Refunded': {
+        bg: 'bg-emerald-50',
+        text: 'text-emerald-800',
+        border: 'border-emerald-300',
+        icon: '✅',
+        dot: 'bg-emerald-500',
+        description: 'Amount has been refunded to your account'
+      },
+      'Closed': {
+        bg: 'bg-gray-50',
+        text: 'text-gray-800',
+        border: 'border-gray-300',
+        icon: '✔️',
+        dot: 'bg-gray-500',
+        description: 'Case has been closed'
+      }
+    };
+    return configs[status] || configs['Pending'];
+  };
+
+  const getStatusProgress = (status) => {
+    const progress = {
+      'Pending': 20,
+      'In Process': 50,
+      'Funds Frozen': 70,
+      'Refunded': 90,
+      'Closed': 100
+    };
+    return progress[status] || 20;
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-12 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-amber-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Loading cases...</p>
+      </div>
+    );
+  }
+
+  if (cases.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-12 text-center">
+        <div className="w-20 h-20 bg-gradient-to-br from-amber-100 to-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <svg className="w-10 h-10 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        </div>
+        <h3 className="text-xl font-semibold text-gray-800 mb-2">No Cases Found</h3>
+        <p className="text-gray-500 mb-4">
+          {profile?.role === 'normal' || !profile?.role
+            ? "You haven't filed any complaints yet."
+            : 'No cases available at the moment.'}
+        </p>
+        {profile?.role === 'normal' || !profile?.role ? (
+          <button
+            onClick={onSwitchToFile}
+            className="px-6 py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl"
+          >
+            File Your First Complaint
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl shadow-md border border-gray-200 p-5 hover:shadow-lg transition-shadow">
+          <div className="flex items-center justify-between mb-2">
+            <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-gray-800">{cases.length}</div>
+          <div className="text-sm text-gray-600 font-medium">Total Cases</div>
+        </div>
+        <div className="bg-gradient-to-br from-amber-50 to-white rounded-xl shadow-md border border-amber-200 p-5 hover:shadow-lg transition-shadow">
+          <div className="flex items-center justify-between mb-2">
+            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+              <span className="text-xl">⏳</span>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-amber-700">
+            {cases.filter(c => c.status === 'Pending').length}
+          </div>
+          <div className="text-sm text-gray-600 font-medium">Pending</div>
+        </div>
+        <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl shadow-md border border-blue-200 p-5 hover:shadow-lg transition-shadow">
+          <div className="flex items-center justify-between mb-2">
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <span className="text-xl">🔄</span>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-blue-700">
+            {cases.filter(c => c.status === 'In Process').length}
+          </div>
+          <div className="text-sm text-gray-600 font-medium">In Process</div>
+        </div>
+        <div className="bg-gradient-to-br from-emerald-50 to-white rounded-xl shadow-md border border-emerald-200 p-5 hover:shadow-lg transition-shadow">
+          <div className="flex items-center justify-between mb-2">
+            <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+              <span className="text-xl">✅</span>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-emerald-700">
+            {cases.filter(c => c.status === 'Refunded' || c.status === 'Closed').length}
+          </div>
+          <div className="text-sm text-gray-600 font-medium">Resolved</div>
+        </div>
+      </div>
+
+      {/* Cases List */}
+      <div className="space-y-4">
+        {cases.map((c, index) => {
+          const statusConfig = getStatusConfig(c.status);
+          const progress = getStatusProgress(c.status);
+          const isExpanded = expandedCase === c.id;
+
+          return (
+            <div
+              key={c.id || c.caseId}
+              className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300"
+            >
+              {/* Case Header */}
+              <div className="p-6">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className={`w-12 h-12 ${statusConfig.bg} rounded-xl flex items-center justify-center text-2xl`}>
+                        {statusConfig.icon}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-1">
+                          <h3 className="text-xl font-bold text-gray-900">{c.fraudType || 'Unknown Fraud'}</h3>
+                          <span className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 ${statusConfig.border} ${statusConfig.bg} ${statusConfig.text} flex items-center gap-1.5`}>
+                            <span className={`w-2 h-2 ${statusConfig.dot} rounded-full`}></span>
+                            {c.status}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-500 font-mono">Case ID: {c.caseId}</p>
+                      </div>
+                    </div>
+
+                    {/* Status Description */}
+                    <div className={`${statusConfig.bg} border-l-4 ${statusConfig.border} p-3 rounded-r-lg mb-4`}>
+                      <p className={`text-sm font-medium ${statusConfig.text}`}>{statusConfig.description}</p>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-gray-600">Case Progress</span>
+                        <span className="text-xs font-bold text-amber-600">{progress}%</span>
+                      </div>
+                      <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full bg-gradient-to-r from-amber-500 to-yellow-500 rounded-full transition-all duration-1000 ease-out`}
+                          style={{ width: `${progress}%` }}
+                        ></div>
+                      </div>
+                    </div>
+
+                    {/* Quick Info Grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          Filed On
+                        </div>
+                        <p className="text-sm font-semibold text-gray-800">
+                          {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : 'N/A'}
+                        </p>
+                      </div>
+                      {c.transactions && c.transactions[0] && (
+                        <div className="bg-amber-50 rounded-lg p-3">
+                          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Amount Lost
+                          </div>
+                          <p className="text-sm font-bold text-amber-700">₹{c.transactions[0].amount || 0}</p>
+                        </div>
+                      )}
+                      {c.location && (
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                            </svg>
+                            Location
+                          </div>
+                          <p className="text-sm font-semibold text-gray-800 truncate">{c.location}</p>
+                        </div>
+                      )}
+                      {(profile?.role === 'police' || profile?.role === 'bank') && (
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                            </svg>
+                            Victim
+                          </div>
+                          <p className="text-sm font-semibold text-gray-800 truncate">{c.victimName || 'Unknown'}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Expandable Details */}
+                <button
+                  onClick={() => setExpandedCase(isExpanded ? null : c.id)}
+                  className="w-full flex items-center justify-between text-sm font-semibold text-amber-600 hover:text-amber-700 transition-colors"
+                >
+                  <span>{isExpanded ? 'Hide Details' : 'View Full Details'}</span>
+                  <svg
+                    className={`w-5 h-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Expanded Content */}
+              {isExpanded && (
+                <div className="border-t border-gray-200 bg-gray-50 p-6 space-y-6">
+                  {/* Description */}
+                  {c.description && (
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                        <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Complaint Description
+                      </h4>
+                      <p className="text-sm text-gray-700 bg-white p-4 rounded-lg border border-gray-200">{c.description}</p>
+                    </div>
+                  )}
+
+                  {/* Transaction Details */}
+                  {c.transactions && c.transactions[0] && (
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                        <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Transaction Details
+                      </h4>
+                      <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <span className="text-xs text-gray-500">Amount Lost</span>
+                            <p className="text-lg font-bold text-amber-700 mt-1">₹{c.transactions[0].amount || 0}</p>
+                          </div>
+                          {c.transactions[0].txnId && (
+                            <div>
+                              <span className="text-xs text-gray-500">Transaction ID</span>
+                              <p className="text-sm font-mono text-gray-800 mt-1 break-all">{c.transactions[0].txnId}</p>
+                            </div>
+                          )}
+                          {c.bankName && (
+                            <div>
+                              <span className="text-xs text-gray-500">Bank Name</span>
+                              <p className="text-sm font-semibold text-gray-800 mt-1">{c.bankName}</p>
+                            </div>
+                          )}
+                          {c.walletName && (
+                            <div>
+                              <span className="text-xs text-gray-500">Wallet/Payment App</span>
+                              <p className="text-sm font-semibold text-gray-800 mt-1">{c.walletName}</p>
+                            </div>
+                          )}
+                        </div>
+                        {c.scammerAccountNumber && (
+                          <div className="pt-3 border-t border-gray-200">
+                            <span className="text-xs text-gray-500">Scammer Account Details</span>
+                            <div className="mt-2 space-y-1">
+                              {c.scammerAccountNumber && (
+                                <p className="text-sm text-gray-800"><span className="font-semibold">Account:</span> {c.scammerAccountNumber}</p>
+                              )}
+                              {c.scammerIFSC && (
+                                <p className="text-sm text-gray-800"><span className="font-semibold">IFSC:</span> {c.scammerIFSC}</p>
+                              )}
+                              {c.scammerUPIId && (
+                                <p className="text-sm text-gray-800"><span className="font-semibold">UPI ID:</span> {c.scammerUPIId}</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Case Timeline - Enhanced */}
+                  {(profile?.role === 'normal' || !profile?.role) && (
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
+                        <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                        Case Timeline & Progress
+                      </h4>
+                      <div className="bg-white rounded-lg border border-gray-200 p-6">
+                        {c.timeline && c.timeline.length > 0 ? (
+                          <div className="relative">
+                            {/* Vertical Timeline Line */}
+                            <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gradient-to-b from-amber-300 via-amber-400 to-amber-300"></div>
+                            
+                            <div className="space-y-6">
+                              {c.timeline.map((item, idx) => {
+                                const isLast = idx === c.timeline.length - 1;
+                                return (
+                                  <div key={idx} className="relative flex items-start gap-4">
+                                    {/* Timeline Dot */}
+                                    <div className="relative z-10 flex-shrink-0">
+                                      <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-yellow-500 rounded-full border-4 border-white flex items-center justify-center shadow-lg">
+                                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                      </div>
+                                    </div>
+                                    
+                                    {/* Timeline Content */}
+                                    <div className="flex-1 pt-1">
+                                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                                        <p className="text-base font-bold text-gray-900 mb-1">{item.status || item.event}</p>
+                                        <p className="text-sm text-gray-700 mb-2">{item.note || item.description}</p>
+                                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                          </svg>
+                                          <span>
+                                            {item.at ? new Date(item.at).toLocaleString() : item.timestamp ? new Date(item.timestamp).toLocaleString() : 'N/A'}
+                                          </span>
+                                          {item.by && (
+                                            <>
+                                              <span>•</span>
+                                              <span>by {item.by}</span>
+                                            </>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-8">
+                            <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <p className="text-sm text-gray-500">No timeline updates yet</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Evidence Files */}
+                  <div>
+                    <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      Evidence Files
+                    </h4>
+                    <EvidenceFilesList caseId={c.id} evidenceMetadata={c.evidence || []} />
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function CyberFraudReport({ user: userProp }) {
+  const { user: userFromAuth, profile } = useAuth();
+  const user = userProp || userFromAuth;
+  const [viewMode, setViewMode] = useState('file'); // 'file' or 'track'
   const [currentSection, setCurrentSection] = useState(1); // 1: Personal, 2: Incident, 3: Evidence
   const [form, setForm] = useState({
     // Personal Details (Required)
@@ -306,7 +911,9 @@ export default function ComplaintForm({ user: userProp }) {
         : Date.now();
       
       // Create case document first
-      const caseRef = await addDoc(collection(db, 'cases'), {
+      let caseRef;
+      try {
+        caseRef = await addDoc(collection(db, 'cases'), {
         caseId,
         ncrpId: null,
         victimUid: user.uid,
@@ -358,7 +965,14 @@ export default function ComplaintForm({ user: userProp }) {
         timeline: [{ status: 'Pending', note: 'Complaint created by victim', at: Date.now() }],
         createdAt: Date.now(),
         updatedAt: Date.now()
-      });
+        });
+      } catch (createError) {
+        // Handle permission errors specifically for case creation
+        if (createError.code === 'permission-denied' || createError.message?.includes('permission') || createError.message?.includes('Missing or insufficient permissions')) {
+          throw new Error('PERMISSION_DENIED: Please update Firestore security rules to allow case creation.');
+        }
+        throw createError;
+      }
       
       // Process files and store them in subcollection (to avoid document size limit)
       if (files.length > 0) {
@@ -403,34 +1017,58 @@ export default function ComplaintForm({ user: userProp }) {
             
             const uploadData = await uploadResponse.json();
             if (uploadData.success && uploadData.fileData) {
-              // Store file in subcollection
-              await addDoc(evidenceCollection, {
-                name: uploadData.fileData.name,
-                data: uploadData.fileData.data, // base64 string
-                contentType: uploadData.fileData.contentType,
-                size: uploadData.fileData.size,
-                uploadedAt: uploadData.fileData.uploadedAt
-              });
-              
-              // Store only metadata in case document
-              evidenceMetadata.push({
-                name: uploadData.fileData.name,
-                contentType: uploadData.fileData.contentType,
-                size: uploadData.fileData.size,
-                uploadedAt: uploadData.fileData.uploadedAt
-              });
-              
-              console.log(`File ${f.name} stored successfully in subcollection`);
+              try {
+                // Store file in subcollection
+                await addDoc(evidenceCollection, {
+                  name: uploadData.fileData.name,
+                  data: uploadData.fileData.data, // base64 string
+                  contentType: uploadData.fileData.contentType,
+                  size: uploadData.fileData.size,
+                  uploadedAt: uploadData.fileData.uploadedAt
+                });
+                
+                // Store only metadata in case document
+                evidenceMetadata.push({
+                  name: uploadData.fileData.name,
+                  contentType: uploadData.fileData.contentType,
+                  size: uploadData.fileData.size,
+                  uploadedAt: uploadData.fileData.uploadedAt
+                });
+                
+                console.log(`File ${f.name} stored successfully in subcollection`);
+              } catch (evidenceError) {
+                // Handle permission errors for evidence subcollection
+                if (evidenceError.code === 'permission-denied' || evidenceError.message?.includes('permission')) {
+                  console.warn(`File ${f.name}: Permission denied for evidence subcollection. Skipping file.`);
+                } else {
+                  console.error(`File ${f.name} evidence storage error:`, evidenceError);
+                }
+                // Continue with other files
+              }
             }
           } catch (uploadError) {
             console.error(`File ${f.name} error:`, uploadError);
+            // Handle ERR_BLOCKED_BY_CLIENT gracefully
+            if (uploadError.message?.includes('ERR_BLOCKED_BY_CLIENT') || uploadError.message?.includes('blocked')) {
+              console.warn(`File ${f.name}: Request blocked by browser extension. This is usually harmless.`);
+            }
             // Continue with other files
           }
         }
         
         // Update case document with evidence metadata
         if (evidenceMetadata.length > 0) {
-          await setDoc(caseRef, { evidence: evidenceMetadata }, { merge: true });
+          try {
+            await setDoc(caseRef, { evidence: evidenceMetadata }, { merge: true });
+          } catch (updateError) {
+            // Handle permission errors for updating case document
+            if (updateError.code === 'permission-denied' || updateError.message?.includes('permission')) {
+              console.warn('⚠️ Could not update case with evidence metadata due to permissions. Case created but evidence metadata not saved.');
+            } else {
+              console.error('Error updating case with evidence metadata:', updateError);
+            }
+            // Continue - case is already created
+          }
         }
         
         // Show summary message
@@ -510,12 +1148,23 @@ export default function ComplaintForm({ user: userProp }) {
       console.error('Submit error:', err);
       let errorMsg = 'Submit failed: ' + err.message;
       
-      if (err.message?.includes('CORS') || err.code === 'storage/unauthorized') {
+      // Handle Firestore permission errors
+      if (err.code === 'permission-denied' || err.message?.includes('permission') || err.message?.includes('Missing or insufficient permissions')) {
+        errorMsg = '⚠️ Firestore permission denied. Please update Firestore security rules in Firebase Console to allow case creation.';
+        console.warn('💡 To fix: Update Firestore security rules to allow authenticated users to create cases.');
+        console.warn('💡 See firestore.rules file for the correct rules.');
+      } else if (err.message?.includes('ERR_BLOCKED_BY_CLIENT') || err.message?.includes('blocked')) {
+        // Ad blocker or browser extension blocking requests
+        errorMsg = '⚠️ Request blocked by browser extension or ad blocker. Please disable ad blockers for this site and try again.';
+        console.warn('⚠️ Firestore request blocked (likely by ad blocker). Please disable ad blockers.');
+      } else if (err.message?.includes('CORS') || err.code === 'storage/unauthorized') {
         errorMsg = 'CORS Error: Please configure Firebase Storage CORS. See console for details.';
+      } else if (err.message?.includes('network') || err.message?.includes('fetch')) {
+        errorMsg = 'Network error: Please check your internet connection and try again.';
       }
       
       setMessage({ type: 'error', text: errorMsg });
-      setTimeout(() => setMessage({ type: '', text: '' }), 8000);
+      setTimeout(() => setMessage({ type: '', text: '' }), 10000);
     } finally {
       setSubmitting(false);
     }
@@ -526,21 +1175,58 @@ export default function ComplaintForm({ user: userProp }) {
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header Section */}
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-4 mb-4">
+          <div className="flex items-center justify-center gap-4 mb-6">
             <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-yellow-500 rounded-2xl flex items-center justify-center shadow-lg">
               <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <div className="text-left">
-              <h1 className="text-4xl font-bold text-gray-900 mb-2">Cyber Fraud Report</h1>
-              <p className="text-gray-600 text-lg">File a complaint for cyber fraud incidents</p>
+            <div>
+              <h1 className="text-4xl font-bold text-gray-900 mb-2">Cyber Fraud</h1>
+              <p className="text-gray-600 text-lg">Report and track cyber fraud incidents</p>
+            </div>
+          </div>
+
+          {/* Toggle Switch */}
+          <div className="flex items-center justify-center gap-4 mb-6">
+            <div className="bg-white rounded-full p-1.5 shadow-lg border border-gray-200 inline-flex">
+              <button
+                type="button"
+                onClick={() => setViewMode('file')}
+                className={`px-6 py-3 rounded-full font-semibold text-sm transition-all duration-300 flex items-center gap-2 ${
+                  viewMode === 'file'
+                    ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                File a Complaint
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('track')}
+                className={`px-6 py-3 rounded-full font-semibold text-sm transition-all duration-300 flex items-center gap-2 ${
+                  viewMode === 'track'
+                    ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                </svg>
+                Track Complaints
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Main Form Card */}
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl border border-gray-200 p-6 sm:p-8 lg:p-10">
+        {/* Main Content */}
+        {viewMode === 'track' ? (
+          <CasesList user={user} profile={profile} onSwitchToFile={() => setViewMode('file')} />
+        ) : (
+          <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl border border-gray-200 p-6 sm:p-8 lg:p-10">
 
           {/* Success/Error Messages */}
           {message.type === 'success' && (
@@ -1180,7 +1866,7 @@ export default function ComplaintForm({ user: userProp }) {
                 onChange={e => setForm({...form, complaintDescription: e.target.value})}
                 rows={6}
                 required
-                className="w-full resize-none"
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all resize-none"
               />
               <p className="text-xs text-gray-500 mt-1">The more details you provide, the better we can help you</p>
             </div>
@@ -1357,7 +2043,7 @@ export default function ComplaintForm({ user: userProp }) {
                       type="button"
                       onClick={getCurrentLocation}
                       disabled={gettingLocation}
-                      className="btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition-all duration-200 text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                       {gettingLocation ? (
                         <>
@@ -1464,7 +2150,8 @@ export default function ComplaintForm({ user: userProp }) {
               </div>
             )}
           </div>
-        </form>
+          </form>
+        )}
       </div>
     </div>
   );
