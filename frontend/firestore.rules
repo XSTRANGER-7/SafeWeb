@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection - users can read/write their own profile
+    match /users/{userId} {
+      // Allow read if user is authenticated and accessing their own data
+      allow read: if request.auth != null && request.auth.uid == userId;
+      
+      // Allow create/update if user is authenticated and accessing their own data
+      allow create, update: if request.auth != null && request.auth.uid == userId;
+      
+      // Allow delete only if user is deleting their own data
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Default: deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

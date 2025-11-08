@@ -1,0 +1,8 @@
+{
+    "nav": { "home":"Home", "features":"Features", "analytics":"Analytics", "docs":"Docs", "login":"Login" },
+    "hero": { "title":"Cyber Fraud Victim Support", "subtitle":"Track complaints, coordinate with police and banks, get updates in real-time." , "cta":"Get Started" },
+    "features": { "heading":"Our Features", "phishing":"Phishing Detection", "women":"Women Safety", "cyber":"Cyber Fraud" },
+    "login": { "title":"Sign in", "phone":"Sign in with Phone", "aadhaar":"Aadhaar (Demo)", "role":"Select Role", "normal":"Normal", "police":"Police", "bank":"Bank" },
+    "footer": { "about":"About", "contact":"Contact", "privacy":"Privacy Policy" }
+  }
+  
