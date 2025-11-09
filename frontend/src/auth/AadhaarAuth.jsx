@@ -22,7 +22,7 @@ export default function AadhaarAuth({ onSuccess }) {
 
     // Validate Aadhaar number (12 digits)
     if (!/^\d{12}$/.test(aadhaar)) {
-      alert('Please enter a valid 12-digit Aadhaar number')
+      console.error('Please enter a valid 12-digit Aadhaar number')
       setLoading(false)
       return
     }
@@ -31,47 +31,65 @@ export default function AadhaarAuth({ onSuccess }) {
     await new Promise(resolve => setTimeout(resolve, 1500))
 
     // Generate OTP (in production, this would come from backend/UIDAI)
-    const otp = generateOtp()
-    setGeneratedOtp(otp)
-    setSent(true)
-    setLoading(false)
+    const otpValue = generateOtp()
+    setGeneratedOtp(otpValue)
 
-    // In a real implementation, the OTP would be sent via SMS/Email
-    // For now, we'll show it in console and alert (for testing)
-    console.log('Aadhaar OTP generated:', otp)
-    alert(`OTP sent to your registered mobile number.\n\nFor testing: OTP is ${otp}`)
+  try {
+      // Send the generated OTP to backend so it can be logged to the server terminal
+      // Backend endpoint should accept this POST and log it (for testing/debugging only)
+      // Directly target backend on localhost during development
+      const API_BASE = 'http://localhost:5000'
+      const res = await fetch(`${API_BASE}/api/debug/otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aadhaarNumber: aadhaar, otp: otpValue })
+      })
+
+      if (!res.ok) {
+        throw new Error(`Server responded with ${res.status}`)
+      }
+
+      // Mark as sent (OTP will be visible on backend terminal, not in frontend)
+      setSent(true)
+    } catch (err) {
+      console.error('Failed to send OTP to backend:', err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function verify(e) {
     e.preventDefault()
     setLoading(true)
-
     if (otp.length !== 6) {
-      alert('Please enter a valid 6-digit OTP')
+      console.error('Please enter a valid 6-digit OTP')
       setLoading(false)
       return
     }
-
-    if (otp !== generatedOtp) {
-      alert('Invalid OTP. Please check and try again.')
-      setLoading(false)
-      return
-    }
-
-    // Simulate verification delay
-    await new Promise(resolve => setTimeout(resolve, 1000))
 
     try {
-      // In production, you would verify Aadhaar with UIDAI API here
-      // and store the verified Aadhaar number in the user profile
-      
-      // User is already authenticated via mobile, we just verify Aadhaar
-      // Pass a dummy user object (the actual user is already authenticated)
-      setLoading(false)
-      onSuccess && onSuccess({ aadhaarVerified: true, aadhaarNumber: aadhaar })
+      // Call backend verify endpoint
+      const API_BASE = 'http://localhost:5000'
+      const res = await fetch(`${API_BASE}/api/debug/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aadhaarNumber: aadhaar, otp })
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        console.error('OTP verification failed:', data && data.message)
+        setLoading(false)
+        return
+      }
+
+  // Successful verification: proceed to next step
+  setLoading(false)
+  onSuccess && onSuccess({ aadhaarVerified: true, aadhaarNumber: aadhaar })
+  // Redirect to home page
+  window.location.href = '/'
     } catch (err) {
       console.error('Aadhaar verification failed:', err)
-      alert('Aadhaar verification failed: ' + err.message)
       setLoading(false)
     }
   }
@@ -146,7 +164,7 @@ export default function AadhaarAuth({ onSuccess }) {
                 <span>Sending OTP...</span>
               </>
             ) : (
-              <>
+                <>
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                 </svg>
@@ -156,75 +174,67 @@ export default function AadhaarAuth({ onSuccess }) {
           </button>
         </form>
       ) : (
-        <form onSubmit={verify} className="space-y-6">
+        <div className="space-y-4">
           <div className="p-4 bg-green-50 border-l-4 border-green-500 rounded-md">
-            <div className="flex items-center gap-2 text-green-700">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="text-sm font-medium">OTP sent successfully to your registered mobile number</span>
+            <div className="flex flex-col gap-2 text-green-700">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-medium">OTP generated and sent to backend (check backend terminal)</span>
+              </div>
+
+              <form onSubmit={verify} className="space-y-2">
+                <input
+                  type="text"
+                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all text-center text-2xl tracking-widest font-semibold"
+                  value={otp}
+                  onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="Enter OTP"
+                  maxLength="6"
+                  required
+                />
+
+                <button
+                  type="submit"
+                  disabled={loading || otp.length !== 6}
+                  className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white py-3 rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span>Verifying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>Verify & Login</span>
+                    </>
+                  )}
+                </button>
+              </form>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSent(false)
+                  setOtp('')
+                  setGeneratedOtp('')
+                  setAadhaar('')
+                }}
+                className="w-full text-sm text-gray-600 hover:text-amber-600 transition-colors"
+              >
+                Change Aadhaar number
+              </button>
             </div>
           </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              <div className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-                Enter OTP
-              </div>
-            </label>
-            <input
-              type="text"
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all text-center text-2xl tracking-widest font-semibold"
-              value={otp}
-              onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder="000000"
-              maxLength="6"
-              required
-            />
-            <p className="mt-2 text-xs text-gray-500">Enter the 6-digit OTP sent to your registered mobile number</p>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading || otp.length !== 6}
-            className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white py-3 rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <>
-                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span>Verifying...</span>
-              </>
-            ) : (
-              <>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span>Verify Aadhaar</span>
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSent(false)
-              setOtp('')
-              setGeneratedOtp('')
-              setAadhaar('')
-            }}
-            className="w-full text-sm text-gray-600 hover:text-amber-600 transition-colors"
-          >
-            Change Aadhaar number
-          </button>
-        </form>
+        </div>
       )}
     </div>
   )
 }
-

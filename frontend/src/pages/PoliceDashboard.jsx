@@ -3,6 +3,7 @@ import { collection, query, onSnapshot, orderBy, doc, updateDoc, getDoc, getDocs
 import { db } from "../../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNavigate } from "react-router-dom";
+import { notifyVictimPoliceUpdate, createNotificationForRole } from "../utils/notifications.js";
 
 // Component to load and display evidence files from subcollection
 function EvidenceFilesList({ caseId, evidenceMetadata }) {
@@ -341,6 +342,20 @@ export default function PoliceDashboard() {
         updatedAt: now
       });
       
+      // Notify victim that case was viewed
+      if (currentData.victimUid) {
+        try {
+          await notifyVictimPoliceUpdate(
+            currentData.victimUid,
+            currentData.caseId || caseDocId,
+            'viewed',
+            {}
+          )
+        } catch (notifError) {
+          console.error('Failed to notify victim:', notifError)
+        }
+      }
+      
       setSuccessMsg('Case marked as viewed successfully');
       const updated = { ...selected, viewedAt: now, tracking: [...currentTracking, {
         event: 'Case Viewed',
@@ -397,6 +412,20 @@ export default function PoliceDashboard() {
         }],
         updatedAt: now
       });
+      
+      // Notify victim about FIR filing
+      if (currentData.victimUid) {
+        try {
+          await notifyVictimPoliceUpdate(
+            currentData.victimUid,
+            currentData.caseId || caseDocId,
+            'fir',
+            { firNumber: firNumber.trim() }
+          )
+        } catch (notifError) {
+          console.error('Failed to notify victim:', notifError)
+        }
+      }
       
       setSuccessMsg(`FIR filed successfully with number: ${firNumber.trim()}`);
       setShowFirModal(false);
@@ -459,6 +488,20 @@ export default function PoliceDashboard() {
         updatedAt: now
       });
       
+      // Notify victim about police message
+      if (currentData.victimUid) {
+        try {
+          await notifyVictimPoliceUpdate(
+            currentData.victimUid,
+            currentData.caseId || caseDocId,
+            'message',
+            { message: messageText.trim() }
+          )
+        } catch (notifError) {
+          console.error('Failed to notify victim:', notifError)
+        }
+      }
+      
       setSuccessMsg('Message sent successfully');
       setMessageText("");
       
@@ -503,6 +546,20 @@ export default function PoliceDashboard() {
         }],
         updatedAt: now
       });
+      
+      // Notify victim about case note
+      if (currentData.victimUid) {
+        try {
+          await notifyVictimPoliceUpdate(
+            currentData.victimUid,
+            currentData.caseId || caseDocId,
+            'note',
+            { note: caseNote.trim() }
+          )
+        } catch (notifError) {
+          console.error('Failed to notify victim:', notifError)
+        }
+      }
       
       setSuccessMsg('Case note added successfully');
       setShowNoteModal(false);
@@ -553,6 +610,20 @@ export default function PoliceDashboard() {
         }]
       });
       
+      // Notify victim about status update
+      if (currentData.victimUid) {
+        try {
+          await notifyVictimPoliceUpdate(
+            currentData.victimUid,
+            currentData.caseId || caseDocId,
+            'status',
+            { status, note }
+          )
+        } catch (notifError) {
+          console.error('Failed to notify victim:', notifError)
+        }
+      }
+      
       setSuccessMsg(`Case status updated to: ${status}`);
       const updated = { ...selected, status };
       setSelected(updated);
@@ -598,6 +669,33 @@ export default function PoliceDashboard() {
         }],
         updatedAt: now
       });
+      
+      // Notify victim about bank investigation request
+      if (currentData.victimUid) {
+        try {
+          await notifyVictimPoliceUpdate(
+            currentData.victimUid,
+            currentData.caseId || caseDocId,
+            'investigation',
+            {}
+          )
+        } catch (notifError) {
+          console.error('Failed to notify victim:', notifError)
+        }
+      }
+      
+      // Notify all bank users about investigation request
+      try {
+        await createNotificationForRole(
+          'bank',
+          'Bank Investigation Requested by Police',
+          `Police has requested investigation for case ${currentData.caseId || caseDocId}. Victim: ${currentData.victimName || 'Unknown'}. Amount: ₹${currentData.amountLost || 0}`,
+          `/bank-dashboard?caseId=${currentData.caseId || caseDocId}`,
+          'investigation_request'
+        )
+      } catch (notifError) {
+        console.error('Failed to notify bank:', notifError)
+      }
       
       setSuccessMsg('Bank investigation requested successfully');
       const updated = { ...selected, status: 'In Process' };

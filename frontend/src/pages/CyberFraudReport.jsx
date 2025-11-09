@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { db } from "../../firebase.js";
 import { collection, addDoc, doc, setDoc, query, where, onSnapshot, getDocs } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext.jsx";
+import { notifyNewComplaint } from "../utils/notifications.js";
 
 // Allowed file types for evidence uploads
 const ALLOWED_FILE_TYPES = {
@@ -972,6 +973,19 @@ export default function CyberFraudReport({ user: userProp }) {
           throw new Error('PERMISSION_DENIED: Please update Firestore security rules to allow case creation.');
         }
         throw createError;
+      }
+      
+      // Notify police and bank about the new complaint
+      try {
+        const caseData = {
+          caseId,
+          victimName: form.fullName,
+          amountLost: Number(form.amountLost) || 0
+        }
+        await notifyNewComplaint(caseId, caseData)
+      } catch (notifError) {
+        console.error('Failed to send notifications:', notifError)
+        // Don't fail the complaint creation if notification fails
       }
       
       // Process files and store them in subcollection (to avoid document size limit)

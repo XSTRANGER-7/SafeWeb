@@ -3,6 +3,7 @@ import { Routes, Route } from 'react-router-dom'
 import { I18nProvider } from '../i18n/index.jsx'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
+import DialogflowChatbot from './components/DialogflowChatbot'
 import Home from './pages/Home'
 import Features from './pages/Features'
 import Analytics from './pages/Analytics'
@@ -46,6 +47,7 @@ export default function App() {
           </Routes>
         </main>
         <Footer />
+        <DialogflowChatbot />
       </div>
     </I18nProvider>
   )

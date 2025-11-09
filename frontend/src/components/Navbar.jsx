@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useI18n } from '../../i18n/index.jsx'
 import LanguageSwitcher from './LanguageSwitcher'
 import ProfileDropdown from './ProfileDropdown'
+import NotificationBell from './NotificationBell'
 import { useAuth } from '../context/AuthContext'
 import logoImage from '../assets/logo.jpg'
 
@@ -76,6 +77,7 @@ export default function Navbar() {
           {/* Right Side - Language & Login/Profile */}
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
+            {user && <NotificationBell />}
             {user ? (
               <ProfileDropdown />
             ) : (

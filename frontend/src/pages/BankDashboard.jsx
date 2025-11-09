@@ -3,6 +3,7 @@ import { collection, query, orderBy, onSnapshot, doc, updateDoc, getDoc, getDocs
 import { db } from "../../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNavigate } from "react-router-dom";
+import { notifyVictimBankUpdate } from "../utils/notifications.js";
 
 // Component to load and display evidence files from subcollection
 function EvidenceFilesList({ caseId, evidenceMetadata }) {
@@ -323,6 +324,20 @@ export default function BankDashboard() {
         updatedAt: now
       });
       
+      // Notify victim about bank message
+      if (currentData.victimUid) {
+        try {
+          await notifyVictimBankUpdate(
+            currentData.victimUid,
+            currentData.caseId || caseDocId,
+            'message',
+            { message: messageText.trim() }
+          )
+        } catch (notifError) {
+          console.error('Failed to notify victim:', notifError)
+        }
+      }
+      
       setMessageText("");
       
       // Update selected case
@@ -397,6 +412,20 @@ export default function BankDashboard() {
         tracking: updatedTracking,
         updatedAt: now
       });
+      
+      // Notify victim about funds freeze
+      if (currentData.victimUid) {
+        try {
+          await notifyVictimBankUpdate(
+            currentData.victimUid,
+            currentData.caseId || caseDoc.id,
+            'freeze',
+            { amount }
+          )
+        } catch (notifError) {
+          console.error('Failed to notify victim:', notifError)
+        }
+      }
       
       // Update selected case
       const updated = { 
