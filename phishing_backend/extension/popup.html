@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PhishGuard</title>
+    <style>
+      body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system; background:#0a0f1e; color:#fff; }
+      .wrap { width: 320px; padding: 12px; }
+      .glass { background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:10px; }
+      .btn { background:#00e0ff33; color:#00e0ff; border:1px solid #00e0ff66; padding:8px 12px; border-radius:10px; cursor:pointer }
+      input { width: 100%; background: transparent; color:#fff; border:1px solid rgba(255,255,255,.15); padding:8px 10px; border-radius:10px }
+      .muted { color: #9aa4b2; font-size: 12px }
+      .danger { color:#ff3864 }
+      .success { color:#00ffa3 }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h3 style="margin:4px 0 10px 0"><span style="color:#00e0ff">Phish</span><span style="color:#7a5cff">Guard</span></h3>
+      <div class="glass">
+        <input id="url" placeholder="Paste URL or use current tab" />
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button id="use-tab" class="btn">Use current tab</button>
+          <button id="scan" class="btn">Scan</button>
+        </div>
+        <div id="status" class="muted" style="margin-top:8px"></div>
+      </div>
+
+      <div class="glass" style="margin-top:10px">
+        <div class="muted">Final verdict</div>
+        <div id="verdict" style="font-weight:800; margin-top:6px; font-size:18px">—</div>
+        <div id="pulse" style="margin-top:8px; width:16px; height:16px; border-radius:999px; background:#9aa4b2; opacity:.8"></div>
+      </div>
+
+      <div class="muted" style="margin-top:8px">Right-click the extension → Options to set API base.</div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+  </html>
+
+
