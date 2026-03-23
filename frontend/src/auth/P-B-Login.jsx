@@ -252,10 +252,24 @@ export default function PBLogin() {
                 <p className="font-semibold">Switch login type</p>
                 <div className="mt-1 flex flex-wrap items-center gap-3">
                   <Link to="/login" className="underline hover:text-amber-700">User Login</Link>
-                  <span>|</span>
-                  <Link to="/login/police" className="underline hover:text-amber-700">Police Login</Link>
-                  <span>|</span>
-                  <Link to="/login/bank" className="underline hover:text-amber-700">Bank Login</Link>
+                  {role === 'police' ? (
+                    <>
+                      <span>|</span>
+                      <Link to="/login/bank" className="underline hover:text-amber-700">Bank Login</Link>
+                    </>
+                  ) : role === 'bank' ? (
+                    <>
+                      <span>|</span>
+                      <Link to="/login/police" className="underline hover:text-amber-700">Police Login</Link>
+                    </>
+                  ) : (
+                    <>
+                      <span>|</span>
+                      <Link to="/login/police" className="underline hover:text-amber-700">Police Login</Link>
+                      <span>|</span>
+                      <Link to="/login/bank" className="underline hover:text-amber-700">Bank Login</Link>
+                    </>
+                  )}
                 </div>
               </div>
 
