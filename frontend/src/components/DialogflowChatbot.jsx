@@ -25,7 +25,6 @@ export default function DialogflowChatbot() {
 
   // Don't render if agent ID is not configured
   if (!agentId) {
-    console.warn('⚠️ Dialogflow Agent ID not configured. Set VITE_DIALOGFLOW_AGENT_ID in .env file')
     return null
   }
 

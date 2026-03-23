@@ -1,18 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { db } from '../../firebase'
-import { collection, query, where, onSnapshot, orderBy, updateDoc, doc, getDocs } from 'firebase/firestore'
+import { collection, query, where, onSnapshot, orderBy, updateDoc, doc } from 'firebase/firestore'
 import { useAuth } from '../context/AuthContext'
 import { useI18n } from '../../i18n'
 
 export default function NotificationBell() {
-  const { user, profile } = useAuth()
+  const { user } = useAuth()
   const { t } = useI18n()
   const navigate = useNavigate()
   const [notifications, setNotifications] = useState([])
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [showOnlyUnread, setShowOnlyUnread] = useState(false)
+  const [listenerError, setListenerError] = useState('')
   const dropdownRef = useRef(null)
 
   // Close dropdown when clicking outside
@@ -37,75 +38,85 @@ export default function NotificationBell() {
     }
 
     setIsLoading(true)
+    setListenerError('')
     const notificationsRef = collection(db, 'notifications')
-    
-    // Try with orderBy first, fallback to just where if index doesn't exist
-    let q
-    try {
-      q = query(
-        notificationsRef,
-        where('recipientId', '==', user.uid),
-        orderBy('createdAt', 'desc')
-      )
-    } catch (error) {
-      // If orderBy fails (no index), use just the where clause
-      console.warn('OrderBy query failed, using simple query:', error)
-      q = query(
-        notificationsRef,
-        where('recipientId', '==', user.uid)
-      )
-    }
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const notifs = []
-        snapshot.forEach((doc) => {
-          notifs.push({ id: doc.id, ...doc.data() })
-        })
-        // Sort by createdAt descending if we couldn't use orderBy
-        notifs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-        setNotifications(notifs)
-        setIsLoading(false)
-        const unread = notifs.filter(n => !n.read).length
-        const read = notifs.filter(n => n.read).length
-        console.log(`📬 Loaded ${notifs.length} notifications for user ${user.uid} (${unread} unread, ${read} read)`)
-      },
-      (error) => {
-        console.error('❌ Error listening to notifications:', error)
-        // If the error is about missing index, try without orderBy
-        if (error.code === 'failed-precondition' || error.message?.includes('index')) {
-          console.log('⚠️ Index missing, trying without orderBy...')
-          const simpleQ = query(
-            notificationsRef,
-            where('recipientId', '==', user.uid)
-          )
-          onSnapshot(
-            simpleQ,
-            (snapshot) => {
-              const notifs = []
-              snapshot.forEach((doc) => {
-                notifs.push({ id: doc.id, ...doc.data() })
-              })
-              notifs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-              setNotifications(notifs)
-              setIsLoading(false)
-              const unread = notifs.filter(n => !n.read).length
-              const read = notifs.filter(n => n.read).length
-              console.log(`📬 Loaded ${notifs.length} notifications for user ${user.uid} (${unread} unread, ${read} read)`)
-            },
-            (err) => {
-              console.error('❌ Error with simple query:', err)
-              setIsLoading(false)
-            }
-          )
-        } else {
-          setIsLoading(false)
-        }
-      }
+    const queryWithOrder = query(
+      notificationsRef,
+      where('recipientId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    )
+    const queryWithoutOrder = query(
+      notificationsRef,
+      where('recipientId', '==', user.uid)
     )
 
-    return () => unsubscribe()
+    let fallbackUnsubscribe = null
+
+    const applySnapshot = (snapshot) => {
+      const notifs = []
+      snapshot.forEach((snapshotDoc) => {
+        notifs.push({ id: snapshotDoc.id, ...snapshotDoc.data() })
+      })
+      notifs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      setNotifications(notifs)
+      setListenerError('')
+      setIsLoading(false)
+      const unread = notifs.filter(n => !n.read).length
+      const read = notifs.filter(n => n.read).length
+      console.log(`📬 Loaded ${notifs.length} notifications for user ${user.uid} (${unread} unread, ${read} read)`)
+    }
+
+    const handleError = (error) => {
+      if (error.code === 'permission-denied') {
+        // Permission-denied is handled with user-facing text below.
+      } else if (
+        error.message?.includes('ERR_BLOCKED_BY_CLIENT') ||
+        error.message?.includes('net::ERR_BLOCKED_BY_CLIENT')
+      ) {
+        // Blocked-by-client is handled with user-facing text below.
+      } else {
+        console.error('❌ Error listening to notifications:', error)
+      }
+
+      if (error.code === 'failed-precondition' || error.message?.includes('index')) {
+        console.log('⚠️ Index missing, retrying notifications query without orderBy...')
+        fallbackUnsubscribe = onSnapshot(
+          queryWithoutOrder,
+          applySnapshot,
+          (fallbackError) => {
+            console.error('❌ Error with fallback notification query:', fallbackError)
+            setNotifications([])
+            setListenerError('Notifications are temporarily unavailable.')
+            setIsLoading(false)
+          }
+        )
+        return
+      }
+
+      if (error.code === 'permission-denied') {
+        setListenerError('Notification permission denied. Please check Firestore rules for notifications.')
+      } else if (
+        error.message?.includes('ERR_BLOCKED_BY_CLIENT') ||
+        error.message?.includes('net::ERR_BLOCKED_BY_CLIENT')
+      ) {
+        setListenerError('Notifications are blocked by browser extension/privacy settings. Allow Firebase/Firestore requests for this site.')
+      } else {
+        setListenerError('Failed to load notifications.')
+      }
+
+      setNotifications([])
+      setIsLoading(false)
+    }
+
+    const unsubscribe = onSnapshot(queryWithOrder, applySnapshot, handleError)
+
+    return () => {
+      unsubscribe()
+      if (fallbackUnsubscribe) {
+        fallbackUnsubscribe()
+      }
+    }
   }, [user?.uid])
 
   // Mark notification as read
@@ -225,6 +236,10 @@ export default function NotificationBell() {
             {isLoading ? (
               <div className="px-4 py-8 text-center text-sm text-gray-500">
                 {t('notifications.loading', 'Loading...')}
+              </div>
+            ) : listenerError ? (
+              <div className="px-4 py-8 text-center text-sm text-red-600">
+                {listenerError}
               </div>
             ) : displayedNotifications.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-gray-500">

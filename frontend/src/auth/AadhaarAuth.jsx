@@ -8,7 +8,6 @@ export default function AadhaarAuth({ onSuccess }) {
   const [aadhaar, setAadhaar] = useState('')
   const [otp, setOtp] = useState('')
   const [sent, setSent] = useState(false)
-  const [generatedOtp, setGeneratedOtp] = useState('')
   const [loading, setLoading] = useState(false)
 
   // Generate a random 6-digit OTP
@@ -32,7 +31,6 @@ export default function AadhaarAuth({ onSuccess }) {
 
     // Generate OTP (in production, this would come from backend/UIDAI)
     const otpValue = generateOtp()
-    setGeneratedOtp(otpValue)
 
   try {
       // Send the generated OTP to backend so it can be logged to the server terminal
@@ -83,11 +81,9 @@ export default function AadhaarAuth({ onSuccess }) {
         return
       }
 
-  // Successful verification: proceed to next step
-  setLoading(false)
-  onSuccess && onSuccess({ aadhaarVerified: true, aadhaarNumber: aadhaar })
-  // Redirect to home page
-  window.location.href = '/'
+      // Successful verification: let parent control post-login flow.
+      setLoading(false)
+      onSuccess && onSuccess({ aadhaarVerified: true, aadhaarNumber: aadhaar })
     } catch (err) {
       console.error('Aadhaar verification failed:', err)
       setLoading(false)
@@ -224,7 +220,6 @@ export default function AadhaarAuth({ onSuccess }) {
                 onClick={() => {
                   setSent(false)
                   setOtp('')
-                  setGeneratedOtp('')
                   setAadhaar('')
                 }}
                 className="w-full text-sm text-gray-600 hover:text-amber-600 transition-colors"

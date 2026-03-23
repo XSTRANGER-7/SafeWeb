@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { signInWithEmailAndPassword } from 'firebase/auth'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
-import { auth, db } from '../../firebase'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth'
+import { auth } from '../../firebase'
+import {
+  getRoleFromPath,
+  getDashboardRoute,
+  getLoginPathForRole,
+  isOfficialRole
+} from './roleUtils'
+import { getUserRoleProfile, upsertUserProfile } from './profileService'
 
 export default function PBLogin() {
   const navigate = useNavigate()
@@ -12,14 +18,7 @@ export default function PBLogin() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
   
-  // Determine role from route path
-  const getRoleFromPath = () => {
-    if (location.pathname.includes('/login/police')) return 'police'
-    if (location.pathname.includes('/login/bank')) return 'bank'
-    return 'normal'
-  }
-  
-  const role = getRoleFromPath()
+  const role = getRoleFromPath(location.pathname)
 
   // Handle login form submission
   async function handleLogin(e) {
@@ -39,143 +38,51 @@ export default function PBLogin() {
       const userCredential = await signInWithEmailAndPassword(auth, email, password)
       const user = userCredential.user
 
-      // Try to verify the user's role in Firestore
-      let userRole = null
-      let roleVerified = false
-      let firestoreAccessible = true
+      if (!isOfficialRole(role)) {
+        await signOut(auth)
+        setError('Please use the user login page for this account type.')
+        setLoading(false)
+        return
+      }
+
+      let profileResult
+      try {
+        profileResult = await getUserRoleProfile(user.uid)
+      } catch {
+        await signOut(auth)
+        setError('Unable to verify account role. Please try again after checking Firestore access.')
+        setLoading(false)
+        return
+      }
+
+      const accountRole = profileResult.role
+
+      if (!isOfficialRole(accountRole)) {
+        await signOut(auth)
+        setError('This account is not registered as a police or bank official account.')
+        setLoading(false)
+        return
+      }
+
+      if (accountRole !== role) {
+        await signOut(auth)
+        const correctLogin = getLoginPathForRole(accountRole)
+        setError(`Role mismatch. This account is registered as ${accountRole}. Please use ${correctLogin}.`)
+        setLoading(false)
+        return
+      }
 
       try {
-        // Check users collection first
-        const userRef = doc(db, 'users', user.uid)
-        const userSnap = await getDoc(userRef)
-
-        if (userSnap.exists()) {
-          const userData = userSnap.data()
-          userRole = userData.role
-          console.log('Found user in Firestore users collection. Role:', userRole, 'Expected:', role)
-          
-          // If role doesn't match, update it to match the login route
-          if (userRole !== role) {
-            console.log('Role mismatch detected. Updating role from', userRole, 'to', role)
-            try {
-              await setDoc(userRef, {
-                role: role,
-                updatedAt: new Date().toISOString()
-              }, { merge: true })
-              console.log('Role updated successfully')
-              roleVerified = true
-            } catch (updateErr) {
-              console.warn('Could not update role:', updateErr)
-              // Still allow login if update fails
-              roleVerified = true
-            }
-          } else {
-            roleVerified = true
-          }
-        } else {
-          // User doesn't exist in users collection, check officials collection
-          console.log('User not found in users collection, checking officials collection...')
-          const officialRef = doc(db, 'officials', user.uid)
-          const officialSnap = await getDoc(officialRef)
-
-          if (officialSnap.exists()) {
-            const officialData = officialSnap.data()
-            userRole = officialData.role
-            console.log('Found user in Firestore officials collection. Role:', userRole, 'Expected:', role)
-            
-            // If role doesn't match, update it in officials collection
-            if (userRole !== role) {
-              console.log('Role mismatch in officials collection. Updating role from', userRole, 'to', role)
-              try {
-                await setDoc(officialRef, {
-                  role: role,
-                  updatedAt: new Date().toISOString()
-                }, { merge: true })
-                console.log('Role updated in officials collection')
-                userRole = role // Update local variable
-              } catch (updateErr) {
-                console.warn('Could not update role in officials collection:', updateErr)
-              }
-            }
-            
-            roleVerified = true
-            
-            // Create/update user profile in users collection with correct role
-            try {
-              await setDoc(userRef, {
-                email: user.email,
-                role: role, // Use the role from login route
-                name: officialData.name || '',
-                officialId: officialData.officialId || '',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              }, { merge: true })
-              console.log('Created/updated user profile in users collection with role:', role)
-            } catch (writeErr) {
-              console.warn('Could not write to users collection:', writeErr)
-              // Continue anyway - user is authenticated
-            }
-          } else {
-            console.log('User not found in either users or officials collection. UID:', user.uid)
-          }
-        }
-      } catch (firestoreError) {
-        // Handle Firestore errors (blocked by client, permission denied, etc.)
-        firestoreAccessible = false
-        console.warn('Firestore access error:', firestoreError)
-        console.warn('Error code:', firestoreError.code)
-        console.warn('Error message:', firestoreError.message)
-        
-        // If Firestore is blocked or has permission issues, allow login anyway
-        // The user is authenticated via Firebase Auth, which is the primary check
-        if (firestoreError.message?.includes('ERR_BLOCKED_BY_CLIENT') || 
-            firestoreError.code === 'permission-denied' ||
-            firestoreError.message?.includes('blocked') ||
-            firestoreError.message?.includes('Failed to fetch')) {
-          console.warn('Firestore blocked or permission denied. Allowing login based on Firebase Auth only.')
-          roleVerified = true // Allow login if Firestore is blocked
-        } else {
-          // For other Firestore errors, still try to proceed
-          console.warn('Firestore error, but user is authenticated. Proceeding with login.')
-          roleVerified = true
-        }
+        await upsertUserProfile(user.uid, {
+          email: user.email || '',
+          role: accountRole,
+          updatedAt: new Date().toISOString()
+        })
+      } catch (writeErr) {
+        console.warn('Could not update users profile metadata:', writeErr)
       }
 
-      // If we couldn't verify role and Firestore is accessible, but user exists, allow login anyway
-      // (We've already tried to update the role above)
-      if (!roleVerified && firestoreAccessible && userRole === null) {
-        // User not found in Firestore at all - this is unusual but allow login
-        console.warn('User not found in Firestore. Allowing login and creating profile...')
-        try {
-          const userRef = doc(db, 'users', user.uid)
-          await setDoc(userRef, {
-            email: user.email,
-            role: role,
-            createdAt: new Date().toISOString()
-          }, { merge: true })
-          roleVerified = true
-        } catch (createErr) {
-          console.warn('Could not create user profile:', createErr)
-          // Still allow login
-          roleVerified = true
-        }
-      }
-
-      // If Firestore is not accessible, log a warning but allow login
-      if (!firestoreAccessible) {
-        console.warn('⚠️ Firestore is not accessible. Login allowed based on Firebase Auth only.')
-        console.warn('⚠️ Please ensure Firestore documents exist for proper role verification.')
-      }
-
-      // Success - navigate to appropriate dashboard based on role
-      if (role === 'police') {
-        navigate('/police-dashboard')
-      } else if (role === 'bank') {
-        // Bank dashboard - redirect to regular dashboard for now, can be updated later
-        navigate('/bank-dashboard')
-      } else {
-        navigate('/dashboard')
-      }
+      navigate(getDashboardRoute(accountRole))
     } catch (err) {
       console.error('Login error:', err)
       let errorMessage = 'Login failed. Please check your credentials.'
@@ -340,6 +247,17 @@ export default function PBLogin() {
                   )}
                 </button>
               </form>
+
+              <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <p className="font-semibold">Switch login type</p>
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  <Link to="/login" className="underline hover:text-amber-700">User Login</Link>
+                  <span>|</span>
+                  <Link to="/login/police" className="underline hover:text-amber-700">Police Login</Link>
+                  <span>|</span>
+                  <Link to="/login/bank" className="underline hover:text-amber-700">Bank Login</Link>
+                </div>
+              </div>
 
               {/* Footer */}
               <div className="mt-8 pt-6 border-t border-gray-200">

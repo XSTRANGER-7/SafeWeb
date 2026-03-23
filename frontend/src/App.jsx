@@ -19,6 +19,7 @@ import PoliceDashboard from './pages/PoliceDashboard.jsx'
 import PoliceStats from "./pages/PoliceStats.jsx"
 import BankDashboard from "./pages/BankDashboard.jsx"
 import BankStats from "./pages/BankStats.jsx"
+import ProtectedRoute from './components/ProtectedRoute'
 
 export default function App() {
   return (
@@ -35,14 +36,14 @@ export default function App() {
             <Route path="/login/police" element={<PBLogin />} />
             <Route path="/login/bank" element={<PBLogin />} />
             <Route path="/admin" element={<Admin />} />
-            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['normal']}><Dashboard /></ProtectedRoute>} />
             <Route path="/phishing-detection" element={<PhishingDetection />} />
             {/* <Route path="/women-safety" element={<WomenSafety />} /> */}
             <Route path="/cyber-fraud-report" element={<CyberFraudReport />} />
-            <Route path="/police-dashboard" element={<PoliceDashboard />} />
-            <Route path="/bank-dashboard" element={<BankDashboard />} />
-            <Route path="/police-stats" element={<PoliceStats />} />
-            <Route path="/bank-stats" element={<BankStats />} />
+            <Route path="/police-dashboard" element={<ProtectedRoute allowedRoles={['police']}><PoliceDashboard /></ProtectedRoute>} />
+            <Route path="/bank-dashboard" element={<ProtectedRoute allowedRoles={['bank']}><BankDashboard /></ProtectedRoute>} />
+            <Route path="/police-stats" element={<ProtectedRoute allowedRoles={['police']}><PoliceStats /></ProtectedRoute>} />
+            <Route path="/bank-stats" element={<ProtectedRoute allowedRoles={['bank']}><BankStats /></ProtectedRoute>} />
 
           </Routes>
         </main>

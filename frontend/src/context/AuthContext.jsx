@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { auth, db } from '../../firebase'
+import { auth } from '../../firebase'
 import { onAuthStateChanged, signOut } from 'firebase/auth'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { getUserRoleProfile, upsertUserProfile } from '../auth/profileService'
 
 const AuthContext = createContext()
 
@@ -15,42 +15,61 @@ export function AuthProvider({ children }) {
       setLoading(true)
       if (u) {
         setUser(u)
-        // ensure profile doc exists
+
         try {
-          const ref = doc(db, 'users', u.uid)
-          const snap = await getDoc(ref)
-          if (!snap.exists()) {
-            // create default profile
-            try {
-              await setDoc(ref, { 
-                name: u.displayName || '', 
-                email: u.email || '', 
-                role: 'normal',
-                createdAt: new Date().toISOString()
-              }, { merge: true })
-              setProfile({ name: u.displayName || '', email: u.email || '', role: 'normal' })
-            } catch (writeErr) {
-              console.error('Failed to create user profile:', writeErr)
-              // Set profile from auth data even if Firestore write fails
-              setProfile({ name: u.displayName || '', email: u.email || '', role: 'normal' })
+          const roleProfile = await getUserRoleProfile(u.uid)
+
+          if (roleProfile.data) {
+            const hydratedProfile = {
+              ...roleProfile.data,
+              name: roleProfile.data.name || u.displayName || '',
+              email: roleProfile.data.email || u.email || '',
+              role: roleProfile.role || null
+            }
+            setProfile(hydratedProfile)
+
+            // Mirror officials profile into users collection for compatibility.
+            if (roleProfile.source === 'officials') {
+              try {
+                await upsertUserProfile(u.uid, {
+                  name: hydratedProfile.name,
+                  email: hydratedProfile.email,
+                  role: hydratedProfile.role,
+                  officialId: hydratedProfile.officialId || '',
+                  updatedAt: new Date().toISOString()
+                })
+              } catch (syncErr) {
+                console.warn('Could not mirror official profile into users collection:', syncErr)
+              }
             }
           } else {
-            setProfile(snap.data())
+            const defaultProfile = {
+              name: u.displayName || '',
+              email: u.email || '',
+              role: 'normal',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }
+
+            try {
+              await upsertUserProfile(u.uid, defaultProfile)
+            } catch (writeErr) {
+              console.error('Failed to create user profile:', writeErr)
+            }
+
+            setProfile(defaultProfile)
           }
         } catch (readErr) {
-          // Handle permission errors gracefully
           if (readErr.code === 'permission-denied' || readErr.message?.includes('permission')) {
             console.warn('⚠️ Firestore permission denied. Using auth data for profile.')
             console.warn('💡 To fix: Update Firestore security rules in Firebase Console')
-            setProfile({ name: u.displayName || '', email: u.email || '', role: 'normal' })
+            setProfile({ name: u.displayName || '', email: u.email || '', role: null })
           } else if (readErr.message?.includes('ERR_BLOCKED_BY_CLIENT') || readErr.message?.includes('blocked')) {
-            // Ad blocker or browser extension blocking requests - not a real error
             console.warn('⚠️ Firestore request blocked (likely by ad blocker). Using auth data for profile.')
-            setProfile({ name: u.displayName || '', email: u.email || '', role: 'normal' })
+            setProfile({ name: u.displayName || '', email: u.email || '', role: null })
           } else {
             console.error('Failed to read user profile:', readErr)
-            // For other errors, still set basic profile
-            setProfile({ name: u.displayName || '', email: u.email || '', role: 'normal' })
+            setProfile({ name: u.displayName || '', email: u.email || '', role: null })
           }
         }
       } else {
