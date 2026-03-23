@@ -183,7 +183,7 @@ export default function PBLogin() {
               </div>
 
               <div className="mb-6 sm:mb-8">
-                <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">{getTitle()}</h2>
+                <h2 className="text-2xl text-center sm:text-3xl font-bold text-gray-900 mb-2">{getTitle()}</h2>
                 <p className="text-sm sm:text-base text-gray-600">Enter your official email and password to access your account</p>
               </div>
 

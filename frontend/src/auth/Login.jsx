@@ -270,7 +270,7 @@ export default function Login() {
   return (
     <div className="flex min-h-[calc(100vh-180px)] items-center justify-center px-3 py-5 sm:px-4 sm:py-8 md:py-12">
       <div className="w-full max-w-5xl">
-        <div className="overflow-hidden rounded-[28px] bg-white shadow-[0_25px_80px_-35px_rgba(15,23,42,0.45)] ring-1 ring-slate-200">
+        <div className="overflow-hidden rounded-xl bg-white shadow-[0_25px_80px_-35px_rgba(15,23,42,0.45)] ring-1 ring-slate-200">
           <div className="md:grid md:grid-cols-[1.02fr_0.98fr]">
             <div className="hidden bg-gradient-to-br from-amber-500 via-yellow-500 to-amber-600 p-12 md:flex md:flex-col md:justify-center">
               <div className="text-white">
@@ -296,22 +296,9 @@ export default function Login() {
             </div>
 
             <div className="p-4 sm:p-7 md:p-12">
-              <div className="mb-6 rounded-3xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 p-4 text-white shadow-lg md:hidden">
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-100">User Access</p>
-                <h2 className="mt-2 text-2xl font-bold">Login and register on any screen size</h2>
-                <p className="mt-2 text-sm text-amber-50">
-                  Mobile-friendly user sign-in with email, password, and Google access.
-                </p>
-                <div className="mt-4 flex flex-wrap gap-2 text-xs font-medium">
-                  <span className="rounded-full bg-white/20 px-3 py-1">Email login</span>
-                  <span className="rounded-full bg-white/20 px-3 py-1">Google sign-in</span>
-                  <span className="rounded-full bg-white/20 px-3 py-1">New user register</span>
-                </div>
-              </div>
-
               <div className="mb-6 sm:mb-8">
-                <h2 className="text-2xl font-bold text-slate-900 sm:text-3xl">{heading}</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-600 sm:text-base">{description}</p>
+                <h2 className="text-2xl text-center font-bold text-slate-900 sm:text-3xl">{heading}</h2>
+                <p className="md:flex hidden mt-2 text-sm leading-6 text-slate-600 sm:text-base">{description}</p>
               </div>
 
               {error && (
