@@ -18,6 +18,246 @@ const ALLOWED_FILE_TYPES = {
 };
 
 const MAX_FILE_SIZE = 750 * 1024; // 750KB (Firestore document limit is 1MB, base64 increases size by ~33%)
+const PAN_SCAN_ACCEPT = 'image/jpeg,image/png,image/webp'
+const PAN_OCR_INITIAL_STATE = {
+  loading: false,
+  progress: 0,
+  error: '',
+  extracted: null,
+  fileName: '',
+  confidence: 0,
+  blurScore: 0,
+  qualityWarning: ''
+}
+
+function toTitleCase(value) {
+  return value
+    .toLowerCase()
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function calculateAgeFromDob(dobText) {
+  const match = dobText?.match(/(\d{2})[/-](\d{2})[/-](\d{4})/)
+  if (!match) return ''
+
+  const [, day, month, year] = match
+  const dob = new Date(Number(year), Number(month) - 1, Number(day))
+  if (Number.isNaN(dob.getTime())) return ''
+
+  const now = new Date()
+  let age = now.getFullYear() - dob.getFullYear()
+  const monthDiff = now.getMonth() - dob.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) {
+    age -= 1
+  }
+
+  return age > 0 ? String(age) : ''
+}
+
+function normalizePanCandidate(token) {
+  const chars = token.replace(/[^A-Z0-9]/g, '').split('')
+  if (chars.length !== 10) return token
+
+  const toLetter = { '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '6': 'G', '8': 'B' }
+  const toDigit = { O: '0', Q: '0', D: '0', I: '1', L: '1', Z: '2', S: '5', B: '8' }
+
+  for (let index = 0; index < chars.length; index += 1) {
+    if (index <= 4 || index === 9) {
+      chars[index] = toLetter[chars[index]] || chars[index]
+    } else {
+      chars[index] = toDigit[chars[index]] || chars[index]
+    }
+  }
+
+  return chars.join('')
+}
+
+async function loadImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(image)
+    }
+    image.onerror = (error) => {
+      URL.revokeObjectURL(objectUrl)
+      reject(error)
+    }
+    image.src = objectUrl
+  })
+}
+
+function calculateBlurScore(imageData, width, height) {
+  const gray = new Float32Array(width * height)
+  const pixels = imageData.data
+
+  for (let index = 0, pixel = 0; pixel < pixels.length; index += 1, pixel += 4) {
+    gray[index] = (pixels[pixel] * 0.299) + (pixels[pixel + 1] * 0.587) + (pixels[pixel + 2] * 0.114)
+  }
+
+  let total = 0
+  let count = 0
+  for (let y = 1; y < height - 1; y += 2) {
+    for (let x = 1; x < width - 1; x += 2) {
+      const index = (y * width) + x
+      const laplacian = (4 * gray[index]) - gray[index - 1] - gray[index + 1] - gray[index - width] - gray[index + width]
+      total += laplacian * laplacian
+      count += 1
+    }
+  }
+
+  return count ? total / count : 0
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob)
+        return
+      }
+      reject(new Error('Unable to prepare the PAN image for upload.'))
+    }, type, quality)
+  })
+}
+
+async function preprocessPanImage(file) {
+  const image = await loadImageFromFile(file)
+  const baseWidth = image.naturalWidth || image.width
+  const scale = baseWidth < 1400 ? Math.min(2, 1400 / baseWidth) : 1
+  const width = Math.max(900, Math.round(baseWidth * scale))
+  const height = Math.round((image.naturalHeight || image.height) * (width / baseWidth))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+
+  if (!context) {
+    throw new Error('Canvas preprocessing is not supported in this browser.')
+  }
+
+  context.drawImage(image, 0, 0, width, height)
+  const imageData = context.getImageData(0, 0, width, height)
+  const pixels = imageData.data
+
+  let min = 255
+  let max = 0
+  const luminance = new Float32Array(width * height)
+  for (let index = 0, pixel = 0; pixel < pixels.length; index += 1, pixel += 4) {
+    const value = (pixels[pixel] * 0.299) + (pixels[pixel + 1] * 0.587) + (pixels[pixel + 2] * 0.114)
+    luminance[index] = value
+    if (value < min) min = value
+    if (value > max) max = value
+  }
+
+  const range = Math.max(1, max - min)
+  for (let index = 0, pixel = 0; pixel < pixels.length; index += 1, pixel += 4) {
+    let value = ((luminance[index] - min) / range) * 255
+    value = value > 150 ? Math.min(255, value * 1.08) : value * 0.92
+    pixels[pixel] = value
+    pixels[pixel + 1] = value
+    pixels[pixel + 2] = value
+  }
+
+  context.putImageData(imageData, 0, 0)
+
+  let uploadFile = null
+  try {
+    let quality = 0.9
+    let blob = await canvasToBlob(canvas, 'image/jpeg', quality)
+
+    while (blob.size > MAX_FILE_SIZE && quality > 0.45) {
+      quality -= 0.1
+      blob = await canvasToBlob(canvas, 'image/jpeg', quality)
+    }
+
+    uploadFile = new File(
+      [blob],
+      `${file.name.replace(/\.[^/.]+$/, '') || 'pan-scan'}-scan.jpg`,
+      {
+        type: 'image/jpeg',
+        lastModified: Date.now()
+      }
+    )
+  } catch (error) {
+    console.warn('PAN upload file preparation failed:', error)
+  }
+
+  return {
+    processedImage: canvas.toDataURL('image/png'),
+    blurScore: calculateBlurScore(imageData, width, height),
+    uploadFile
+  }
+}
+
+function extractPanDetailsFromText(text) {
+  const normalizedText = (text || '').toUpperCase()
+  const normalizedLines = normalizedText
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[^A-Z0-9/ .-]/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+
+  let panNumber = normalizedText.match(/[A-Z]{5}[0-9]{4}[A-Z]/)?.[0] || ''
+  if (!panNumber) {
+    const panCandidates = normalizedText.match(/[A-Z0-9]{10}/g) || []
+    panNumber = panCandidates
+      .map(normalizePanCandidate)
+      .find((candidate) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(candidate)) || ''
+  }
+  const dobText = normalizedText.match(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/)?.[0] || ''
+
+  const ignoredPhrases = [
+    'INCOME TAX DEPARTMENT',
+    'GOVT OF INDIA',
+    'GOVERNMENT OF INDIA',
+    'PERMANENT ACCOUNT NUMBER',
+    'NAME',
+    "FATHER'S NAME",
+    'FATHERS NAME',
+    'DATE OF BIRTH',
+    'DOB',
+    'SIGNATURE'
+  ]
+
+  const dobIndex = normalizedLines.findIndex((line) => /\d{2}[/-]\d{2}[/-]\d{4}/.test(line))
+  const panIndex = panNumber ? normalizedLines.findIndex((line) => line.includes(panNumber)) : -1
+  const anchorIndex = dobIndex >= 0 ? dobIndex : panIndex >= 0 ? panIndex : normalizedLines.length
+
+  const nameCandidates = normalizedLines.slice(0, anchorIndex).filter((line) => {
+    if (line.length < 4 || /[0-9]/.test(line)) return false
+    return !ignoredPhrases.some((phrase) => line.includes(phrase))
+  })
+
+  const fullName = nameCandidates.length >= 2
+    ? toTitleCase(nameCandidates[nameCandidates.length - 2])
+    : nameCandidates[0] ? toTitleCase(nameCandidates[0]) : ''
+  const parentName = nameCandidates.length >= 2
+    ? toTitleCase(nameCandidates[nameCandidates.length - 1])
+    : ''
+
+  return {
+    fullName,
+    parentName,
+    panNumber,
+    dobText,
+    age: calculateAgeFromDob(dobText)
+  }
+}
+
+function isSameSelectedFile(firstFile, secondFile) {
+  if (!firstFile || !secondFile) return false
+
+  return (
+    firstFile.name === secondFile.name &&
+    firstFile.size === secondFile.size &&
+    firstFile.lastModified === secondFile.lastModified
+  )
+}
 
 function validateFile(file) {
   // Check file type
@@ -697,6 +937,7 @@ export default function CyberFraudReport({ user: userProp }) {
     complaintDescription: "",
   });
   const [files, setFiles] = useState([]);
+  const [panDocumentFile, setPanDocumentFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -709,6 +950,23 @@ export default function CyberFraudReport({ user: userProp }) {
   const [locationError, setLocationError] = useState('');
   const [gettingLocation, setGettingLocation] = useState(false);
   const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
+  const [panOcr, setPanOcr] = useState(PAN_OCR_INITIAL_STATE);
+  const sectionCompletion = {
+    1: Boolean(form.fullName.trim()) && /^[0-9]{10}$/.test(form.contactNumber.replace(/\D/g, '')) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email),
+    2: Boolean(form.incidentDate && form.incidentTime && form.incidentType && form.complaintDescription.trim()),
+    3: Boolean(termsAccepted && locationData.latitude && locationData.longitude)
+  };
+  const selectedAttachments = [
+    ...(panDocumentFile ? [panDocumentFile] : []),
+    ...files.filter((file) => !panDocumentFile || !isSameSelectedFile(file, panDocumentFile))
+  ];
+  const hasClearPanScan = Boolean(
+    panDocumentFile &&
+    panOcr.extracted?.fullName &&
+    panOcr.extracted?.panNumber &&
+    !panOcr.error &&
+    !panOcr.qualityWarning
+  );
 
   const setViewMode = (nextView) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -837,65 +1095,234 @@ export default function CyberFraudReport({ user: userProp }) {
     );
   }
 
-  function validateForm() {
-    // Required fields validation
-    const requiredFields = {
-      fullName: 'Full Name',
-      contactNumber: 'Contact Number',
-      email: 'Email Address',
-      incidentDate: 'Date of Incident',
-      incidentTime: 'Time of Incident',
-      incidentType: 'Incident Type',
-      complaintDescription: 'Complaint Description'
-    };
+  async function handlePanScan(event) {
+    const input = event.target;
+    const file = input.files?.[0];
+    if (!file) return;
 
-    for (const [key, label] of Object.entries(requiredFields)) {
-      if (!form[key] || form[key].trim() === '') {
-        setMessage({ type: 'error', text: `Please fill in the required field: ${label}` });
-        // Scroll to the section containing this field
-        if (key === 'fullName' || key === 'contactNumber' || key === 'email') {
-          setCurrentSection(1);
-        } else {
+    if (!file.type.startsWith('image/')) {
+      setPanDocumentFile(null);
+      setPanOcr({
+        ...PAN_OCR_INITIAL_STATE,
+        error: 'Please upload a PAN card image in JPG, PNG, or WEBP format.'
+      });
+      input.value = '';
+      return;
+    }
+
+    setPanOcr({
+      ...PAN_OCR_INITIAL_STATE,
+      loading: true,
+      progress: 5,
+      fileName: file.name
+    });
+    setForm((prev) => ({ ...prev, idProofType: 'PAN' }));
+
+    let worker;
+
+    try {
+      const preparedImage = await preprocessPanImage(file);
+      const panUploadCandidate = preparedImage.uploadFile || file;
+      const panUploadValidation = validateFile(panUploadCandidate);
+
+      if (panUploadValidation.valid) {
+        setPanDocumentFile(panUploadCandidate);
+      } else {
+        setPanDocumentFile(null);
+      }
+
+      const { createWorker } = await import('tesseract.js');
+      worker = await createWorker('eng', undefined, {
+        logger: (info) => {
+          if (info.status === 'recognizing text') {
+            setPanOcr((prev) => ({
+              ...prev,
+              progress: Math.max(10, Math.round((info.progress || 0) * 100))
+            }));
+          }
+        }
+      });
+
+      await worker.setParameters({
+        tessedit_pageseg_mode: '6',
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/.- ',
+        preserve_interword_spaces: '1'
+      });
+
+      const result = await worker.recognize(preparedImage.processedImage);
+      let extracted = extractPanDetailsFromText(result.data.text || '');
+      let confidence = Math.round(result.data.confidence || 0);
+
+      const extractedScore = (details) => (
+        Number(Boolean(details.fullName)) +
+        Number(Boolean(details.parentName)) +
+        Number(Boolean(details.panNumber))
+      );
+
+      if (!extracted.panNumber || !extracted.fullName) {
+        await worker.setParameters({
+          tessedit_pageseg_mode: '11',
+          preserve_interword_spaces: '1'
+        });
+        const fallbackResult = await worker.recognize(file);
+        const fallbackExtracted = extractPanDetailsFromText(fallbackResult.data.text || '');
+        const fallbackConfidence = Math.round(fallbackResult.data.confidence || 0);
+
+        if (
+          extractedScore(fallbackExtracted) > extractedScore(extracted) ||
+          (
+            extractedScore(fallbackExtracted) === extractedScore(extracted) &&
+            fallbackConfidence > confidence
+          )
+        ) {
+          extracted = fallbackExtracted;
+          confidence = fallbackConfidence;
+        }
+      }
+
+      let qualityWarning = '';
+
+      if (preparedImage.blurScore < 85) {
+        qualityWarning = 'This image looks blurry or low-contrast. Try scanning again in bright light with the PAN card fully flat.'
+      } else if (!extracted.panNumber || !extracted.fullName) {
+        qualityWarning = 'Some PAN details could not be read clearly. Please verify and correct the fields manually.'
+      } else if (confidence < 70) {
+        qualityWarning = 'OCR confidence is low. Please review the extracted details carefully before continuing.'
+      } else if (!panUploadValidation.valid) {
+        qualityWarning = `PAN details were read, but ${panUploadValidation.error}. Please crop or rescan the image if you want it stored with the complaint.`
+      }
+
+      setPanOcr({
+        ...PAN_OCR_INITIAL_STATE,
+        extracted,
+        fileName: file.name,
+        progress: 100,
+        confidence,
+        blurScore: Math.round(preparedImage.blurScore),
+        qualityWarning
+      });
+
+      setForm((prev) => ({
+        ...prev,
+        fullName: extracted.fullName || prev.fullName,
+        fathersName: extracted.parentName || prev.fathersName,
+        idProofType: 'PAN',
+        idProofNumber: extracted.panNumber || prev.idProofNumber,
+        age: extracted.age || prev.age
+      }));
+
+      if (qualityWarning) {
+        setMessage({
+          type: extracted.panNumber || extracted.fullName ? 'success' : 'error',
+          text: qualityWarning
+        });
+      } else if (extracted.fullName || extracted.panNumber || extracted.parentName) {
+        setMessage({
+          type: 'success',
+          text: 'PAN card scanned successfully. The image looks clear and the key details were fetched.'
+        });
+      } else {
+        setMessage({
+          type: 'error',
+          text: 'Image is blurry or PAN details were not fetched properly. Please scan again with a clearer image.'
+        });
+      }
+      setTimeout(() => setMessage({ type: '', text: '' }), 5000);
+    } catch (error) {
+      console.error('PAN OCR failed:', error);
+      setPanOcr({
+        ...PAN_OCR_INITIAL_STATE,
+        error: 'PAN scan failed. Please upload a clearer PAN image or fill the details manually.',
+        fileName: file.name
+      });
+      setMessage({
+        type: 'error',
+        text: 'PAN scan failed. Please try again with a clear image.'
+      });
+      setTimeout(() => setMessage({ type: '', text: '' }), 5000);
+    } finally {
+      if (worker) {
+        await worker.terminate().catch(() => {});
+      }
+      input.value = '';
+    }
+  }
+
+  function validateSection(sectionNumber) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const phoneRegex = /^[0-9]{10}$/;
+
+    if (sectionNumber === 1) {
+      if (!form.fullName.trim()) {
+        setMessage({ type: 'error', text: 'Please enter your full name as per ID proof.' });
+        setCurrentSection(1);
+        return false;
+      }
+      if (!phoneRegex.test(form.contactNumber.replace(/\D/g, ''))) {
+        setMessage({ type: 'error', text: 'Please enter a valid 10-digit contact number.' });
+        setCurrentSection(1);
+        return false;
+      }
+      if (!emailRegex.test(form.email)) {
+        setMessage({ type: 'error', text: 'Please enter a valid email address.' });
+        setCurrentSection(1);
+        return false;
+      }
+      return true;
+    }
+
+    if (sectionNumber === 2) {
+      const requiredFields = {
+        incidentDate: 'Date of Incident',
+        incidentTime: 'Time of Incident',
+        incidentType: 'Incident Type',
+        complaintDescription: 'Complaint Description'
+      };
+
+      for (const [key, label] of Object.entries(requiredFields)) {
+        if (!form[key] || form[key].trim() === '') {
+          setMessage({ type: 'error', text: `Please fill in the required field: ${label}` });
           setCurrentSection(2);
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (sectionNumber === 3) {
+      if (!termsAccepted) {
+        setMessage({ type: 'error', text: 'Please accept the Terms and Conditions to proceed.' });
+        setCurrentSection(3);
+        return false;
+      }
+      if (!locationData.latitude || !locationData.longitude) {
+        setMessage({ type: 'error', text: 'Please allow location access. Your location is required to file a complaint.' });
+        setCurrentSection(3);
+        if (!gettingLocation) {
+          getCurrentLocation();
         }
         return false;
       }
-    }
-
-    // Email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(form.email)) {
-      setMessage({ type: 'error', text: 'Please enter a valid email address' });
-      setCurrentSection(1);
-      return false;
-    }
-
-    // Phone validation (should be 10 digits)
-    const phoneRegex = /^[0-9]{10}$/;
-    if (!phoneRegex.test(form.contactNumber.replace(/\D/g, ''))) {
-      setMessage({ type: 'error', text: 'Please enter a valid 10-digit contact number' });
-      setCurrentSection(1);
-      return false;
-    }
-
-    // Terms and conditions validation
-    if (!termsAccepted) {
-      setMessage({ type: 'error', text: 'Please accept the Terms and Conditions to proceed' });
-      setCurrentSection(3);
-      return false;
-    }
-
-    // Location validation
-    if (!locationData.latitude || !locationData.longitude) {
-      setMessage({ type: 'error', text: 'Please allow location access. Your location is required to file a complaint.' });
-      setCurrentSection(3);
-      if (!gettingLocation) {
-        getCurrentLocation();
-      }
-      return false;
+      return true;
     }
 
     return true;
+  }
+
+  function moveToSection(nextSection) {
+    if (nextSection > currentSection) {
+      for (let section = currentSection; section < nextSection; section += 1) {
+        if (!validateSection(section)) {
+          return;
+        }
+      }
+    }
+
+    setCurrentSection(nextSection);
+  }
+
+  function validateForm() {
+    return validateSection(1) && validateSection(2) && validateSection(3);
   }
 
   async function handleSubmit(e) {
@@ -911,6 +1338,10 @@ export default function CyberFraudReport({ user: userProp }) {
     try {
       const caseId = `CFCF-OD-${Date.now().toString().slice(-6)}`;
       const evidenceMetadata = []; // Store only file metadata in case document
+      const uploadFiles = [
+        ...(panDocumentFile ? [panDocumentFile] : []),
+        ...files.filter((file) => !panDocumentFile || !isSameSelectedFile(file, panDocumentFile))
+      ];
       
       // Combine incident date and time
       const incidentDateTime = form.incidentDate && form.incidentTime 
@@ -943,6 +1374,7 @@ export default function CyberFraudReport({ user: userProp }) {
         preferredLanguage: form.preferredLanguage || 'English',
         idProofType: form.idProofType || '',
         idProofNumber: form.idProofNumber || '',
+        panCardAttached: Boolean(panDocumentFile),
         // Incident Details
         fraudType: form.incidentType,
         description: form.complaintDescription,
@@ -1000,14 +1432,15 @@ export default function CyberFraudReport({ user: userProp }) {
       }
       
       // Process files and store them in subcollection (to avoid document size limit)
-      if (files.length > 0) {
+      if (uploadFiles.length > 0) {
         const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
         const evidenceCollection = collection(db, 'cases', caseRef.id, 'evidence');
         
-        for (let f of files) {
+        for (let f of uploadFiles) {
           try {
             // Sanitize filename to avoid issues
             const sanitizedName = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const isPanDocument = isSameSelectedFile(f, panDocumentFile);
             
             // Convert file to base64
             const base64File = await fileToBase64(f);
@@ -1049,7 +1482,9 @@ export default function CyberFraudReport({ user: userProp }) {
                   data: uploadData.fileData.data, // base64 string
                   contentType: uploadData.fileData.contentType,
                   size: uploadData.fileData.size,
-                  uploadedAt: uploadData.fileData.uploadedAt
+                  uploadedAt: uploadData.fileData.uploadedAt,
+                  category: isPanDocument ? 'pan_card' : 'supporting_document',
+                  source: isPanDocument ? 'pan_scan' : 'user_upload'
                 });
                 
                 // Store only metadata in case document
@@ -1057,7 +1492,9 @@ export default function CyberFraudReport({ user: userProp }) {
                   name: uploadData.fileData.name,
                   contentType: uploadData.fileData.contentType,
                   size: uploadData.fileData.size,
-                  uploadedAt: uploadData.fileData.uploadedAt
+                  uploadedAt: uploadData.fileData.uploadedAt,
+                  category: isPanDocument ? 'pan_card' : 'supporting_document',
+                  source: isPanDocument ? 'pan_scan' : 'user_upload'
                 });
                 
                 console.log(`File ${f.name} stored successfully in subcollection`);
@@ -1097,34 +1534,34 @@ export default function CyberFraudReport({ user: userProp }) {
         }
         
         // Show summary message
-        if (files.length > 0 && evidenceMetadata.length === 0) {
+        if (uploadFiles.length > 0 && evidenceMetadata.length === 0) {
           setMessage({ 
             type: 'error', 
-            text: `Warning: All files failed to process. Case will be created without evidence files.` 
+            text: `Warning: No attachments could be processed. The case will be created without saved documents.` 
           });
-        } else if (files.length > evidenceMetadata.length) {
+        } else if (uploadFiles.length > evidenceMetadata.length) {
           setMessage({ 
             type: 'error', 
-            text: `Warning: ${files.length - evidenceMetadata.length} file(s) failed to process. ${evidenceMetadata.length} file(s) stored successfully.` 
+            text: `Warning: ${uploadFiles.length - evidenceMetadata.length} attachment(s) failed to process. ${evidenceMetadata.length} attachment(s) were saved successfully.` 
           });
         }
       }
       
-      if (files.length > 0 && evidenceMetadata.length === 0) {
+      if (uploadFiles.length > 0 && evidenceMetadata.length === 0) {
         setMessage({
           type: 'error',
-          text: `⚠️ Case filed (ID: ${caseId}) but all files failed to process. Case created without evidence files.`
+          text: `Case filed (ID: ${caseId}) but no attachments could be saved.`
         });
-      } else if (files.length > 0 && evidenceMetadata.length < files.length) {
+      } else if (uploadFiles.length > 0 && evidenceMetadata.length < uploadFiles.length) {
         setMessage({
           type: 'error',
-          text: `⚠️ Case filed (ID: ${caseId}) but ${files.length - evidenceMetadata.length} file(s) failed. ${evidenceMetadata.length} file(s) stored successfully.`
+          text: `Case filed (ID: ${caseId}) but ${uploadFiles.length - evidenceMetadata.length} attachment(s) failed. ${evidenceMetadata.length} attachment(s) were saved.`
         });
       } else {
-        const evidenceMsg = evidenceMetadata.length > 0 ? ` with ${evidenceMetadata.length} evidence file(s)` : '';
+        const evidenceMsg = evidenceMetadata.length > 0 ? ` with ${evidenceMetadata.length} attachment(s)` : '';
         setMessage({
           type: 'success',
-          text: `✅ Complaint filed successfully${evidenceMsg}! Case ID: ${caseId}. Files stored in Firestore.`
+          text: `Complaint filed successfully${evidenceMsg}. Case ID: ${caseId}.`
         });
       }
       
@@ -1162,10 +1599,12 @@ export default function CyberFraudReport({ user: userProp }) {
       });
       // Clear form and localStorage after successful submission
       setFiles([]);
+      setPanDocumentFile(null);
       setTermsAccepted(false);
       setLocationData({ latitude: null, longitude: null, accuracy: null, timestamp: null });
       setLocationError('');
       setLocationPermissionDenied(false);
+      setPanOcr(PAN_OCR_INITIAL_STATE);
       setCurrentSection(1);
       localStorage.removeItem('complaintFormDraft');
       setTimeout(() => setMessage({ type: '', text: '' }), 5000);
@@ -1251,7 +1690,7 @@ export default function CyberFraudReport({ user: userProp }) {
         {viewMode === 'track' ? (
           <CasesList user={user} profile={profile} onSwitchToFile={() => setViewMode('file')} />
         ) : (
-          <form onSubmit={handleSubmit} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-xl sm:p-8 lg:p-10">
+          <form onSubmit={handleSubmit} className="rounded-2xl border border-gray-200 bg-white p-3 shadow-xl sm:p-8 lg:p-10">
 
           {/* Success/Error Messages */}
           {message.type === 'success' && (
@@ -1287,11 +1726,28 @@ export default function CyberFraudReport({ user: userProp }) {
           </div>
 
           {/* Progress Indicator */}
-          <div className="mb-8">
-            <div className="mb-4 flex gap-3 overflow-x-auto pb-2">
+          <div className="sticky top-2 z-20 mb-8 hidden rounded-[28px] border border-gray-200 bg-white/95 p-3 shadow-lg backdrop-blur md:block">
+            <div className="mb-3 flex items-center justify-between gap-3 px-1">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
+                  Step {currentSection} of 3
+                </p>
+                <p className="mt-1 text-sm text-gray-600">
+                  {currentSection === 1
+                    ? 'Verify your identity and personal details'
+                    : currentSection === 2
+                      ? 'Capture incident information and financial details'
+                      : 'Upload documents, confirm terms, and submit'}
+                </p>
+              </div>
+              <div className="hidden rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 sm:block">
+                Auto-saved draft
+              </div>
+            </div>
+            <div className="flex gap-3 overflow-x-auto pb-1">
               <button
                 type="button"
-                onClick={() => setCurrentSection(1)}
+                onClick={() => moveToSection(1)}
                 className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
                   currentSection === 1 
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
@@ -1306,11 +1762,11 @@ export default function CyberFraudReport({ user: userProp }) {
               <div className={`hidden h-1.5 flex-1 rounded-full transition-all duration-300 md:block ${currentSection >= 2 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-amber-200'}`}></div>
               <button
                 type="button"
-                onClick={() => currentSection >= 2 && setCurrentSection(2)}
+                onClick={() => moveToSection(2)}
                 className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
                   currentSection === 2 
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
-                    : currentSection > 2
+                    : sectionCompletion[1]
                     ? 'bg-amber-100 text-amber-800 border border-amber-200'
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
                 }`}
@@ -1323,34 +1779,197 @@ export default function CyberFraudReport({ user: userProp }) {
               <div className={`hidden h-1.5 flex-1 rounded-full transition-all duration-300 md:block ${currentSection >= 3 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-amber-200'}`}></div>
               <button
                 type="button"
-                onClick={() => currentSection >= 3 && setCurrentSection(3)}
+                onClick={() => moveToSection(3)}
                 className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
                   currentSection === 3 
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
+                    : sectionCompletion[2]
+                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
                 }`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
-                3. Evidence
+                3. Documents & Review
               </button>
             </div>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-4 sm:space-y-6">
+            <button
+              type="button"
+              onClick={() => moveToSection(1)}
+              className="flex w-full items-center justify-between rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left shadow-sm transition md:hidden"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 text-sm font-bold text-white">
+                  1
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">Personal Details</p>
+                  <p className="text-xs text-gray-500">PAN scan and identity check</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+                  {currentSection === 1 ? 'Open' : sectionCompletion[1] ? 'Done' : 'Start'}
+                </span>
+                <svg className={`h-4 w-4 text-amber-700 transition-transform ${currentSection === 1 ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </button>
+
             {/* Section 1: Personal Details */}
             {currentSection === 1 && (
               <div className="space-y-6 animate-fadeIn">
-                <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 pl-6 py-4 rounded-r-lg mb-6">
+                <div className="mb-6 hidden rounded-r-lg border-l-4 border-amber-500 bg-gradient-to-r from-amber-50 to-yellow-50 py-4 pl-6 sm:block">
                   <div className="flex items-center gap-3 mb-2">
                     <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                     </svg>
                     <h4 className="text-xl font-bold text-gray-900">Personal Information</h4>
                   </div>
-                  <p className="text-sm text-gray-600">Please provide your details as per ID proof</p>
+                  <p className="text-sm text-gray-600">Use the PAN scan slot for quick auto-fill, then review the personal details before continuing.</p>
                 </div>
+
+                <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+                  <div className="mb-6 rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-50 p-4 sm:p-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="max-w-2xl">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">PAN OCR Slot</p>
+                        <h5 className="mt-2 text-lg font-semibold text-gray-900">Scan PAN card and pre-fill identity details</h5>
+                        <p className="mt-2 text-sm leading-6 text-gray-600">
+                          Upload a clear PAN image to auto-fill name, PAN number, father&apos;s name, and age where detected.
+                        </p>
+                      </div>
+                      <div className="rounded-full bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-amber-700 shadow-sm">
+                        OCR assisted
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,1fr)]">
+                      <div className="space-y-4">
+                        <div className="rounded-3xl bg-slate-900 p-4 text-white shadow-xl sm:p-5">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">Sample PAN card</p>
+                          <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-amber-300">Income Tax Department</p>
+                            <p className="mt-5 text-base font-semibold tracking-wide">YOUR NAME HERE</p>
+                            <p className="mt-2 text-sm text-slate-300">FATHER NAME HERE</p>
+                            <div className="mt-5 flex items-end justify-between gap-4">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">DOB</p>
+                                <p className="mt-1 text-sm font-medium">01/01/1990</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">PAN</p>
+                                <p className="mt-1 text-base font-semibold tracking-[0.32em]">ABCDE1234F</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-white/80 p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Scan options</p>
+                          <p className="mt-2 text-sm text-gray-700">Use camera scan for live capture or upload a clean PAN image from your device.</p>
+                          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                            <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-amber-600 hover:to-yellow-600">
+                              <input
+                                type="file"
+                                accept={PAN_SCAN_ACCEPT}
+                                capture="environment"
+                                onChange={handlePanScan}
+                                className="hidden"
+                              />
+                              Camera Scan
+                            </label>
+                            <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-semibold text-amber-700 transition hover:bg-amber-50">
+                              <input
+                                type="file"
+                                accept={PAN_SCAN_ACCEPT}
+                                onChange={handlePanScan}
+                                className="hidden"
+                              />
+                              Upload PAN Image
+                            </label>
+                          </div>
+                          {panOcr.fileName && (
+                            <p className="mt-3 text-xs font-medium text-gray-500">Last scanned file: {panOcr.fileName}</p>
+                          )}
+                          {panOcr.loading && (
+                            <div className="mt-4">
+                              <div className="mb-2 flex items-center justify-between text-xs font-semibold text-amber-700">
+                                <span>Reading PAN card</span>
+                                <span>{panOcr.progress}%</span>
+                              </div>
+                              <div className="h-2.5 overflow-hidden rounded-full bg-amber-100">
+                                <div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-yellow-500" style={{ width: `${panOcr.progress}%` }} />
+                              </div>
+                            </div>
+                          )}
+                          {panOcr.error && (
+                            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                              {panOcr.error}
+                            </div>
+                          )}
+                          {panOcr.qualityWarning && !panOcr.error && (
+                            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                              {panOcr.qualityWarning}
+                            </div>
+                          )}
+                          {hasClearPanScan && (
+                            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                              Image looks clear and the main PAN details were fetched properly. This scan is ready to attach with your complaint.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Extracted preview</p>
+                        {panOcr.extracted ? (
+                          <>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                              <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Name</p>
+                                <p className="mt-1 font-semibold text-gray-900">{panOcr.extracted.fullName || 'Not detected'}</p>
+                              </div>
+                              <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Parent Name</p>
+                                <p className="mt-1 font-semibold text-gray-900">{panOcr.extracted.parentName || 'Not detected'}</p>
+                              </div>
+                              <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">PAN Number</p>
+                                <p className="mt-1 font-semibold text-gray-900">{panOcr.extracted.panNumber || 'Not detected'}</p>
+                              </div>
+                              <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Age</p>
+                                <p className="mt-1 font-semibold text-gray-900">{panOcr.extracted.age || 'Not detected'}</p>
+                              </div>
+                            </div>
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              <div className="rounded-2xl border border-gray-200 px-4 py-3">
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">OCR Confidence</p>
+                                <p className="mt-1 text-sm font-semibold text-gray-900">{panOcr.confidence}%</p>
+                              </div>
+                              <div className="rounded-2xl border border-gray-200 px-4 py-3">
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Image Sharpness</p>
+                                <p className="mt-1 text-sm font-semibold text-gray-900">{panOcr.blurScore || 'Not available'}</p>
+                              </div>
+                            </div>
+                            <div className={`mt-4 rounded-2xl px-4 py-3 text-sm ${panDocumentFile ? 'border border-emerald-200 bg-emerald-50 text-emerald-800' : 'border border-gray-200 bg-gray-50 text-gray-600'}`}>
+                              {panDocumentFile ? `PAN image ready for upload: ${panDocumentFile.name}` : 'Scan a PAN image to attach it with this complaint.'}
+                            </div>
+                          </>
+                        ) : (
+                          <p className="mt-3 text-sm leading-6 text-gray-500">
+                            The OCR preview will appear here after you scan a PAN card. You can still edit every field manually.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
@@ -1592,11 +2211,13 @@ export default function CyberFraudReport({ user: userProp }) {
                   </div>
                 </div>
 
-                <div className="flex justify-end pt-6 border-t border-gray-200">
+                </div>
+
+                <div className="flex justify-end border-t border-gray-200 pt-6">
                   <button
                     type="button"
-                    onClick={() => setCurrentSection(2)}
-                    className="px-6 py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2"
+                    onClick={() => moveToSection(2)}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-6 py-3 font-semibold text-white shadow-lg transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-xl sm:w-auto"
                   >
                     <span>Next: Incident Details</span>
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1607,17 +2228,46 @@ export default function CyberFraudReport({ user: userProp }) {
           </div>
         )}
 
+            <button
+              type="button"
+              onClick={() => moveToSection(2)}
+              className="flex w-full items-center justify-between rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm transition md:hidden"
+            >
+              <div className="flex items-center gap-3">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-bold ${currentSection === 2 ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white' : sectionCompletion[1] ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-400'}`}>
+                  2
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">Incident Details</p>
+                  <p className="text-xs text-gray-500">Timeline, amount, and complaint summary</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${currentSection === 2 ? 'bg-amber-50 text-amber-700' : sectionCompletion[2] ? 'bg-green-50 text-green-700' : sectionCompletion[1] ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {currentSection === 2 ? 'Open' : sectionCompletion[2] ? 'Done' : sectionCompletion[1] ? 'Next' : 'Locked'}
+                </span>
+                <svg className={`h-4 w-4 transition-transform ${currentSection === 2 ? 'rotate-180 text-amber-700' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </button>
+
             {/* Section 2: Incident Details */}
             {currentSection === 2 && (
               <div className="space-y-6 animate-fadeIn">
-                <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 pl-6 py-4 rounded-r-lg mb-6">
+                <div className="mb-6 hidden rounded-r-lg border-l-4 border-amber-500 bg-gradient-to-r from-amber-50 to-yellow-50 py-4 pl-6 sm:block">
                   <div className="flex items-center gap-3 mb-2">
                     <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                     <h4 className="text-xl font-bold text-gray-900">Incident Information</h4>
                   </div>
-                  <p className="text-sm text-gray-600">Provide details about the fraud or crime incident</p>
+                  <p className="text-sm text-gray-600">Capture the fraud timeline, financial trail, scammer information, and a clear complaint narrative.</p>
+                </div>
+
+                <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+                <div className="mb-6 hidden rounded-3xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-blue-900 sm:block">
+                  Fill the incident step as accurately as possible. Use exact dates, transaction references, and platform details wherever available.
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1701,7 +2351,7 @@ export default function CyberFraudReport({ user: userProp }) {
                     onChange={e => setForm({...form, location: e.target.value})}
                     className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
                   />
-                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                  <p className="mt-1 hidden items-center gap-1 text-xs text-gray-500 sm:flex">
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
@@ -1886,21 +2536,23 @@ export default function CyberFraudReport({ user: userProp }) {
                 Complaint Description <span className="text-red-500">*</span>
               </label>
               <textarea
-                placeholder="Please provide a detailed description of the incident. Include: what happened, how you were contacted, what information you shared, steps you've taken, etc."
+                placeholder="Explain what happened, how you were contacted, and what action you already took."
                 value={form.complaintDescription}
                 onChange={e => setForm({...form, complaintDescription: e.target.value})}
                 rows={6}
                 required
                 className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all resize-none"
               />
-              <p className="text-xs text-gray-500 mt-1">The more details you provide, the better we can help you</p>
+              <p className="mt-1 hidden text-xs text-gray-500 sm:block">Share the key sequence clearly so the case can be reviewed faster.</p>
             </div>
 
-                <div className="flex justify-between pt-6 border-t border-gray-200">
+                </div>
+
+                <div className="flex flex-col-reverse gap-3 border-t border-gray-200 pt-6 sm:flex-row sm:justify-between">
                   <button
                     type="button"
-                    onClick={() => setCurrentSection(1)}
-                    className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition-all duration-200 flex items-center gap-2"
+                    onClick={() => moveToSection(1)}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-all duration-200 hover:bg-gray-200 sm:w-auto"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -1909,8 +2561,8 @@ export default function CyberFraudReport({ user: userProp }) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCurrentSection(3)}
-                    className="px-6 py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2"
+                    onClick={() => moveToSection(3)}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-6 py-3 font-semibold text-white shadow-lg transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-xl sm:w-auto"
                   >
                     <span>Next: Upload Evidence</span>
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1921,20 +2573,133 @@ export default function CyberFraudReport({ user: userProp }) {
           </div>
         )}
 
+            <button
+              type="button"
+              onClick={() => moveToSection(3)}
+              className="flex w-full items-center justify-between rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm transition md:hidden"
+            >
+              <div className="flex items-center gap-3">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-bold ${currentSection === 3 ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white' : sectionCompletion[2] ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-400'}`}>
+                  3
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">Documents & Review</p>
+                  <p className="text-xs text-gray-500">Attach proof, capture location, submit</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${currentSection === 3 ? 'bg-amber-50 text-amber-700' : sectionCompletion[3] ? 'bg-green-50 text-green-700' : sectionCompletion[2] ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {currentSection === 3 ? 'Open' : sectionCompletion[3] ? 'Done' : sectionCompletion[2] ? 'Next' : 'Locked'}
+                </span>
+                <svg className={`h-4 w-4 transition-transform ${currentSection === 3 ? 'rotate-180 text-amber-700' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </button>
+
             {/* Section 3: Evidence */}
             {currentSection === 3 && (
               <div className="space-y-6 animate-fadeIn">
-                <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 pl-6 py-4 rounded-r-lg mb-6">
+                <div className="mb-6 hidden rounded-r-lg border-l-4 border-amber-500 bg-gradient-to-r from-amber-50 to-yellow-50 py-4 pl-6 sm:block">
                   <div className="flex items-center gap-3 mb-2">
                     <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
-                    <h4 className="text-xl font-bold text-gray-900">Evidence & Documents</h4>
+                    <h4 className="text-xl font-bold text-gray-900">Documents & Review</h4>
                   </div>
-                  <p className="text-sm text-gray-600">Upload screenshots, transaction receipts, or any relevant documents</p>
+                  <p className="text-sm text-gray-600">Upload valid supporting documents, confirm location access, and review the complaint before final submission.</p>
                 </div>
 
-            <div>
+            <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-gray-700">
+                  Supporting Documents
+                </label>
+                <div className="mb-3 rounded-2xl border border-blue-100 bg-blue-50/80 p-3 text-xs text-blue-900">
+                  Upload screenshots, statements, chats, or emails. Each file can be up to 750 KB.
+                </div>
+                <label className="flex cursor-pointer flex-col items-center justify-center rounded-3xl border-2 border-dashed border-amber-200 bg-amber-50/70 p-5 text-center transition hover:border-amber-300 hover:bg-amber-50">
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.doc,.docx,.txt,application/pdf,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                    onChange={e => {
+                      const selectedFiles = Array.from(e.target.files || []);
+                      const validFiles = [];
+                      const errors = [];
+                      
+                      selectedFiles.forEach(file => {
+                        const validation = validateFile(file);
+                        if (validation.valid) {
+                          validFiles.push(file);
+                        } else {
+                          errors.push(`${file.name}: ${validation.error}`);
+                        }
+                      });
+                      
+                      if (errors.length > 0) {
+                        setMessage({ 
+                          type: 'error', 
+                          text: `Invalid files:\n${errors.join('\n')}` 
+                        });
+                        setTimeout(() => setMessage({ type: '', text: '' }), 8000);
+                      }
+                      
+                      setFiles(validFiles);
+                    }}
+                    className="hidden"
+                  />
+                  <svg className="h-10 w-10 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  <p className="mt-3 text-sm font-semibold text-gray-900">Tap to upload documents</p>
+                  <p className="mt-1 text-xs text-gray-600">PDF, image, DOC/DOCX, or TXT</p>
+                </label>
+                {files.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-sm font-medium text-gray-700">
+                      {files.length} supporting file(s) selected
+                    </p>
+                    <div className="max-h-36 space-y-1 overflow-y-auto">
+                      {files.map((file, index) => (
+                        <div key={index} className="flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2">
+                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                            <svg className="h-4 w-4 flex-shrink-0 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span className="truncate text-xs text-gray-800">{file.name}</span>
+                          </div>
+                          <span className="ml-2 text-xs text-gray-600">
+                            {(file.size / 1024).toFixed(1)} KB
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-3xl border border-gray-200 bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Identity Proof</p>
+                {panDocumentFile ? (
+                  <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                    <p className="font-semibold">PAN scan attached</p>
+                    <p className="mt-1 break-all text-xs">{panDocumentFile.name}</p>
+                    <p className="mt-2 text-xs">{(panDocumentFile.size / 1024).toFixed(1)} KB</p>
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-600">
+                    Scan a PAN card in the first section to auto-fill details and attach the image here.
+                  </div>
+                )}
+                <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                  <p className="font-semibold text-gray-900">Ready attachments</p>
+                  <p className="mt-1 text-xs text-gray-600">{selectedAttachments.length} file(s) will be submitted with this complaint.</p>
+                </div>
+              </div>
+            </div>
+            <div className="hidden">
               <label className="block text-sm font-semibold text-gray-700 mb-2">
                 Evidence (Files) - Optional
               </label>
@@ -1982,7 +2747,7 @@ export default function CyberFraudReport({ user: userProp }) {
                     
                     setFiles(validFiles);
                   }}
-                  className="w-full file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-amber-600 file:text-white hover:file:bg-amber-700 file:cursor-pointer"
+                  className="w-full rounded-2xl border-2 border-dashed border-amber-200 bg-amber-50/60 p-4 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-600 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-amber-700 file:cursor-pointer"
                 />
                 {files.length > 0 && (
                   <div className="mt-3 space-y-2">
@@ -2094,7 +2859,7 @@ export default function CyberFraudReport({ user: userProp }) {
             </div>
 
             {/* Terms and Conditions */}
-            <div className="border border-amber-200 rounded-lg p-4 bg-white">
+            <div className="rounded-lg border border-amber-200 bg-white p-4">
               <div className="flex items-start gap-3">
                 <input
                   type="checkbox"
@@ -2107,23 +2872,32 @@ export default function CyberFraudReport({ user: userProp }) {
                 <label htmlFor="termsCheckbox" className="flex-1 text-sm text-gray-700 cursor-pointer">
                   <span className="font-semibold">I accept the Terms and Conditions</span>
                   <span className="text-red-500 ml-1">*</span>
-                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded text-xs text-gray-600 max-h-32 overflow-y-auto">
-                    <p className="font-semibold mb-2">Terms and Conditions:</p>
-                    <ol className="list-decimal list-inside space-y-1">
-                      <li>I confirm that all information provided in this complaint is true and accurate to the best of my knowledge.</li>
-                      <li>I understand that providing false information may result in legal consequences.</li>
-                      <li>I authorize the authorities to use the provided information for investigation purposes.</li>
-                      <li>I consent to the collection and storage of my location data for verification and investigation purposes.</li>
-                      <li>I understand that my complaint will be processed according to applicable laws and regulations.</li>
-                      <li>I acknowledge that the authorities may contact me using the provided contact information for follow-up.</li>
-                      <li>I understand that the processing of my complaint is subject to the jurisdiction of the relevant authorities.</li>
-                    </ol>
+                  <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-gray-600">
+                    <p>I confirm the complaint details are accurate.</p>
+                    <p className="mt-1">I allow the authorities to use the attached information and location for verification.</p>
+                    <p className="mt-1">I understand officials may contact me on the shared phone number or email.</p>
                   </div>
                 </label>
               </div>
             </div>
 
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="mb-2 text-sm text-gray-700">
+                <span className="font-semibold">Summary:</span> Review before submit
+              </p>
+              <div className="space-y-1 text-xs text-gray-600">
+                <p>Name: {form.fullName || 'Not provided'}</p>
+                <p>Contact: {form.contactNumber || 'Not provided'}</p>
+                <p>Incident Type: {form.incidentType || 'Not provided'}</p>
+                <p>Amount Lost: {form.amountLost ? `Rs. ${form.amountLost}` : 'Not specified'}</p>
+                <p>PAN Attached: {panDocumentFile ? 'Yes' : 'No'}</p>
+                <p>Total Attachments: {selectedAttachments.length}</p>
+                <p>Location: {locationData.latitude ? 'Captured' : 'Not captured'}</p>
+                <p>Terms Accepted: {termsAccepted ? 'Yes' : 'No'}</p>
+              </div>
+            </div>
+
+            <div className="hidden rounded-lg border border-amber-200 bg-amber-50 p-4">
               <p className="text-sm text-gray-700 mb-2">
                 <span className="font-semibold">📋 Summary:</span> Review your complaint before submitting
               </p>
@@ -2138,11 +2912,13 @@ export default function CyberFraudReport({ user: userProp }) {
               </div>
             </div>
 
-                <div className="flex justify-between pt-6 border-t border-gray-200">
+                </div>
+
+                <div className="flex flex-col-reverse gap-3 border-t border-gray-200 pt-6 sm:flex-row sm:justify-between">
                   <button
                     type="button"
-                    onClick={() => setCurrentSection(2)}
-                    className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition-all duration-200 flex items-center gap-2"
+                    onClick={() => moveToSection(2)}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-all duration-200 hover:bg-gray-200 sm:w-auto"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -2152,7 +2928,7 @@ export default function CyberFraudReport({ user: userProp }) {
                   <button
                     type="submit"
                     disabled={submitting || !termsAccepted || !locationData.latitude || !locationData.longitude}
-                    className="px-8 py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-8 py-3 font-semibold text-white shadow-lg transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                   >
                     {submitting ? (
                       <>
