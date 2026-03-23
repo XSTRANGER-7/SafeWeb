@@ -129,9 +129,9 @@ export default function PBLogin() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-200px)] flex items-center justify-center py-12 px-4">
+    <div className="min-h-[calc(100vh-200px)] md:min-h-[calc(100vh-200px)] flex items-center justify-center py-6 sm:py-10 md:py-12 px-3 sm:px-4">
       <div className="max-w-4xl w-full">
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl overflow-hidden">
           <div className="md:flex">
             {/* Left Side - Branding */}
             <div className="hidden md:block md:w-1/2 bg-gradient-to-br from-amber-500 via-yellow-500 to-amber-600 p-12 flex flex-col justify-center">
@@ -171,14 +171,24 @@ export default function PBLogin() {
             </div>
 
             {/* Right Side - Login Form */}
-            <div className="md:w-1/2 p-8 md:p-12">
-              <div className="mb-8">
-                <h2 className="text-3xl font-bold text-gray-900 mb-2">{getTitle()}</h2>
-                <p className="text-gray-600">Enter your official email and password to access your account</p>
+            <div className="md:w-1/2 p-5 sm:p-8 md:p-12">
+              <div className="md:hidden mb-5 rounded-lg bg-amber-50 border border-amber-100 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-3xl leading-none">{getIcon()}</span>
+                  <div>
+                    <p className="font-semibold text-amber-900">{getTitle()}</p>
+                    <p className="text-xs text-amber-700">Official access</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-6 sm:mb-8">
+                <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">{getTitle()}</h2>
+                <p className="text-sm sm:text-base text-gray-600">Enter your official email and password to access your account</p>
               </div>
 
               {error && (
-                <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-md">
+                <div className="mb-6 p-3 sm:p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-md">
                   <div className="flex items-center gap-2">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -189,7 +199,7 @@ export default function PBLogin() {
               )}
 
               {/* Login Form */}
-              <form onSubmit={handleLogin} className="space-y-6">
+              <form onSubmit={handleLogin} className="space-y-5 sm:space-y-6">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
                     <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -199,7 +209,7 @@ export default function PBLogin() {
                   </label>
                   <input
                     type="email"
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
+                    className="w-full px-4 py-3 sm:py-3.5 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
                     placeholder="official@example.com"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
@@ -216,7 +226,7 @@ export default function PBLogin() {
                   </label>
                   <input
                     type="password"
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
+                    className="w-full px-4 py-3 sm:py-3.5 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
                     placeholder="Enter your password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
@@ -227,7 +237,7 @@ export default function PBLogin() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white py-3 rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white py-3 sm:py-3.5 rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {loading ? (
                     <>
@@ -248,25 +258,25 @@ export default function PBLogin() {
                 </button>
               </form>
 
-              <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs sm:text-sm text-amber-900">
                 <p className="font-semibold">Switch login type</p>
-                <div className="mt-1 flex flex-wrap items-center gap-3">
+                <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-3">
                   <Link to="/login" className="underline hover:text-amber-700">User Login</Link>
                   {role === 'police' ? (
                     <>
-                      <span>|</span>
+                      <span className="hidden sm:inline">|</span>
                       <Link to="/login/bank" className="underline hover:text-amber-700">Bank Login</Link>
                     </>
                   ) : role === 'bank' ? (
                     <>
-                      <span>|</span>
+                      <span className="hidden sm:inline">|</span>
                       <Link to="/login/police" className="underline hover:text-amber-700">Police Login</Link>
                     </>
                   ) : (
                     <>
-                      <span>|</span>
+                      <span className="hidden sm:inline">|</span>
                       <Link to="/login/police" className="underline hover:text-amber-700">Police Login</Link>
-                      <span>|</span>
+                      <span className="hidden sm:inline">|</span>
                       <Link to="/login/bank" className="underline hover:text-amber-700">Bank Login</Link>
                     </>
                   )}
@@ -274,7 +284,7 @@ export default function PBLogin() {
               </div>
 
               {/* Footer */}
-              <div className="mt-8 pt-6 border-t border-gray-200">
+              <div className="mt-6 sm:mt-8 pt-5 sm:pt-6 border-t border-gray-200">
                 <p className="text-xs text-center text-gray-500">
                   For authorized personnel only. Unauthorized access is prohibited.
                 </p>
