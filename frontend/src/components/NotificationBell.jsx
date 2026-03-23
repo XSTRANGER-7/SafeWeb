@@ -165,11 +165,11 @@ export default function NotificationBell() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 text-gray-600 hover:text-amber-600 hover:bg-amber-50 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+        className="relative rounded-full p-1.5 text-gray-600 transition-colors hover:bg-amber-50 hover:text-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 sm:p-2"
         aria-label="Notifications"
       >
         <svg
-          className="w-6 h-6"
+          className="h-5 w-5 sm:h-6 sm:w-6"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -182,17 +182,17 @@ export default function NotificationBell() {
           />
         </svg>
         {unreadCount > 0 && (
-          <span className="absolute top-0 right-0 block h-5 w-5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+          <span className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white sm:h-5 sm:w-5 sm:text-xs">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-xl border border-gray-200 z-50 max-h-96 overflow-hidden flex flex-col">
+        <div className="absolute right-[-2.75rem] top-full z-50 mt-2 flex max-h-[70vh] w-[min(17rem,calc(100vw-0.75rem))] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl sm:right-0 sm:max-h-96 sm:w-80">
           {/* Header */}
-          <div className="px-4 py-3 border-b border-gray-200">
-            <div className="flex items-center justify-between mb-2">
+          <div className="border-b border-gray-200 px-3 py-2.5 sm:px-4 sm:py-3">
+            <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h3 className="text-sm font-semibold text-gray-900">
                 {t('notifications.title', 'Notifications')}
                 {unreadCount > 0 && (
@@ -204,17 +204,17 @@ export default function NotificationBell() {
               {unreadCount > 0 && (
                 <button
                   onClick={markAllAsRead}
-                  className="text-xs text-amber-600 hover:text-amber-700 font-medium"
+                  className="self-start text-xs font-medium text-amber-600 hover:text-amber-700 sm:self-auto"
                 >
                   {t('notifications.markAllRead', 'Mark all as read')}
                 </button>
               )}
             </div>
             {readCount > 0 && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => setShowOnlyUnread(!showOnlyUnread)}
-                  className={`text-xs px-2 py-1 rounded transition-colors ${
+                  className={`rounded px-2 py-1 text-xs transition-colors ${
                     showOnlyUnread
                       ? 'bg-amber-100 text-amber-700 font-medium'
                       : 'text-gray-600 hover:bg-gray-100'
@@ -234,15 +234,15 @@ export default function NotificationBell() {
           {/* Notifications List */}
           <div className="overflow-y-auto flex-1">
             {isLoading ? (
-              <div className="px-4 py-8 text-center text-sm text-gray-500">
+              <div className="px-3 py-6 text-center text-xs text-gray-500 sm:px-4 sm:py-8 sm:text-sm">
                 {t('notifications.loading', 'Loading...')}
               </div>
             ) : listenerError ? (
-              <div className="px-4 py-8 text-center text-sm text-red-600">
+              <div className="px-3 py-6 text-center text-xs text-red-600 sm:px-4 sm:py-8 sm:text-sm">
                 {listenerError}
               </div>
             ) : displayedNotifications.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-gray-500">
+              <div className="px-3 py-6 text-center text-xs text-gray-500 sm:px-4 sm:py-8 sm:text-sm">
                 {showOnlyUnread 
                   ? t('notifications.noUnreadNotifications', 'No unread notifications')
                   : t('notifications.noNotifications', 'No notifications')
@@ -263,31 +263,31 @@ export default function NotificationBell() {
                         navigate(notif.link)
                       }
                     }}
-                    className={`px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors ${
+                    className={`cursor-pointer px-3 py-2.5 transition-colors hover:bg-gray-50 sm:px-4 sm:py-3 ${
                       !notif.read ? 'bg-amber-50 border-l-4 border-amber-500' : 'bg-white border-l-4 border-transparent'
                     }`}
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start gap-2.5 sm:gap-3">
                       <div
-                        className={`flex-shrink-0 w-2 h-2 rounded-full mt-2 ${
+                        className={`mt-1.5 h-2 w-2 flex-shrink-0 rounded-full sm:mt-2 ${
                           !notif.read ? 'bg-amber-500' : 'bg-gray-300'
                         }`}
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
-                          <p className={`text-sm font-medium ${!notif.read ? 'text-gray-900' : 'text-gray-600'}`}>
+                          <p className={`text-xs font-medium sm:text-sm ${!notif.read ? 'text-gray-900' : 'text-gray-600'}`}>
                             {notif.title}
                           </p>
                           {!notif.read && (
-                            <span className="flex-shrink-0 text-xs font-semibold text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">
+                            <span className="flex-shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 sm:px-2 sm:text-xs">
                               New
                             </span>
                           )}
                         </div>
-                        <p className={`text-xs mt-1 ${!notif.read ? 'text-gray-700' : 'text-gray-500'}`}>
+                        <p className={`mt-1 text-[11px] sm:text-xs ${!notif.read ? 'text-gray-700' : 'text-gray-500'}`}>
                           {notif.message}
                         </p>
-                        <p className="text-xs text-gray-400 mt-1">
+                        <p className="mt-1 text-[11px] text-gray-400">
                           {formatTime(notif.createdAt)}
                           {notif.read && notif.readAt && (
                             <span className="ml-2">• Read {formatTime(notif.readAt)}</span>
