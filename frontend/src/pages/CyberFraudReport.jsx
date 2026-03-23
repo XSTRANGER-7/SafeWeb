@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { db } from "../../firebase.js";
 import { collection, addDoc, setDoc, query, where, onSnapshot, getDocs } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -657,7 +658,8 @@ function CasesList({ user, profile, onSwitchToFile }) {
 export default function CyberFraudReport({ user: userProp }) {
   const { user: userFromAuth, profile } = useAuth();
   const user = userProp || userFromAuth;
-  const [viewMode, setViewMode] = useState('file'); // 'file' or 'track'
+  const [searchParams, setSearchParams] = useSearchParams();
+  const viewMode = searchParams.get('view') === 'track' ? 'track' : 'file';
   const [currentSection, setCurrentSection] = useState(1); // 1: Personal, 2: Incident, 3: Evidence
   const [form, setForm] = useState({
     // Personal Details (Required)
@@ -707,6 +709,16 @@ export default function CyberFraudReport({ user: userProp }) {
   const [locationError, setLocationError] = useState('');
   const [gettingLocation, setGettingLocation] = useState(false);
   const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
+
+  const setViewMode = (nextView) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextView === 'track') {
+      nextParams.set('view', 'track');
+    } else {
+      nextParams.delete('view');
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
 
   // Load saved form data from localStorage on mount
   useEffect(() => {
