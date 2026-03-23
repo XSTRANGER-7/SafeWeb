@@ -169,19 +169,19 @@ export default function Admin() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-200px)] py-8">
+    <div className="min-h-[calc(100vh-200px)] py-6 sm:py-8">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-4 mb-4">
-            <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-yellow-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="mb-8 text-center">
+          <div className="mb-4 flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-yellow-500 shadow-lg sm:h-16 sm:w-16">
+              <svg className="h-7 w-7 text-white sm:h-8 sm:w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
             </div>
             <div>
-              <h1 className="text-4xl font-bold text-gray-900 mb-2">Admin Panel</h1>
-              <p className="text-gray-600 text-lg">Manage Police and Bank Official Accounts</p>
+              <h1 className="mb-2 text-3xl font-bold text-gray-900 sm:text-4xl">Admin Panel</h1>
+              <p className="text-base text-gray-600 sm:text-lg">Manage Police and Bank Official Accounts</p>
             </div>
           </div>
         </div>

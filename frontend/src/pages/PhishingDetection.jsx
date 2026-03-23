@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion as Motion } from 'framer-motion'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -144,36 +144,36 @@ export default function PhishingDetection() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-200px)] py-8">
-      <div className="max-w-4xl mx-auto px-4">
+    <div className="min-h-[calc(100vh-200px)] py-6 sm:py-8">
+      <div className="mx-auto max-w-4xl px-3 sm:px-4">
         {/* Header */}
-        <motion.div
+        <Motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="text-center mb-8"
+          className="mb-8 text-center"
         >
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-yellow-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="mb-4 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-yellow-500 shadow-lg sm:h-16 sm:w-16">
+              <svg className="h-7 w-7 text-white sm:h-8 sm:w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
             </div>
-            <h1 className="text-4xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold text-gray-900 sm:text-4xl">
               Phishing URL Detection
             </h1>
           </div>
-          <p className="text-gray-600 text-lg">
+          <p className="text-base text-gray-600 sm:text-lg">
             Protect yourself from malicious websites. Enter a URL to check if it's safe.
           </p>
-        </motion.div>
+        </Motion.div>
 
         {/* Main Card */}
-        <motion.div
+        <Motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.1 }}
-          className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8"
+          className="rounded-2xl border border-gray-200 bg-white p-4 shadow-xl sm:p-8"
         >
           {/* Input Section */}
           <div className="space-y-4">
@@ -185,7 +185,7 @@ export default function PhishingDetection() {
                 Enter URL to Scan
               </div>
             </label>
-            <div className="flex gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row">
               <div className="flex-1 relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                   <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -194,7 +194,7 @@ export default function PhishingDetection() {
                 </div>
                 <input
                   type="url"
-                  className="w-full pl-12 pr-4 py-4 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all text-gray-900 placeholder-gray-400"
+                  className="w-full rounded-xl border-2 border-gray-300 py-4 pl-12 pr-4 text-gray-900 placeholder-gray-400 transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-amber-500"
                   placeholder="https://example.com"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
@@ -204,7 +204,7 @@ export default function PhishingDetection() {
               <button
                 onClick={onCheck}
                 disabled={loading || !url}
-                className="px-8 py-4 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-xl font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 min-w-[140px] justify-center"
+                className="flex min-w-[140px] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 px-6 py-4 font-semibold text-white shadow-lg transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 sm:px-8"
               >
                 {loading ? (
                   <>
@@ -228,13 +228,13 @@ export default function PhishingDetection() {
 
           {/* Loading Progress Bar */}
           {loading && (
-            <motion.div
+            <Motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               className="mt-6"
             >
               <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                <motion.div
+                <Motion.div
                   className="h-full bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-500"
                   initial={{ x: '-100%' }}
                   animate={{ x: '100%' }}
@@ -246,12 +246,12 @@ export default function PhishingDetection() {
                 />
               </div>
               <p className="text-center text-sm text-gray-500 mt-2">Analyzing URL for security threats...</p>
-            </motion.div>
+            </Motion.div>
           )}
 
           {/* Error Message */}
           {err && (
-            <motion.div
+            <Motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               className="mt-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg"
@@ -262,12 +262,12 @@ export default function PhishingDetection() {
                 </svg>
                 <span className="text-sm font-medium">{err}</span>
               </div>
-            </motion.div>
+            </Motion.div>
           )}
 
           {/* Results */}
           {result && !err && (
-            <motion.div
+            <Motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
@@ -302,7 +302,7 @@ export default function PhishingDetection() {
                     )}
                   </div>
 
-                  <motion.div
+                  <Motion.div
                     className={`w-16 h-16 rounded-full ${verdictBgColor} flex items-center justify-center border-2 ${verdictIconColor.replace('text-', 'border-')}`}
                     initial={{ scale: 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
@@ -323,12 +323,12 @@ export default function PhishingDetection() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     )}
-                  </motion.div>
+                  </Motion.div>
                 </div>
 
                 {renderEnrichment(result.enrichment)}
               </div>
-            </motion.div>
+            </Motion.div>
           )}
 
           {/* Tips Section */}
@@ -360,7 +360,7 @@ export default function PhishingDetection() {
               </ul>
             </div>
           )}
-        </motion.div>
+        </Motion.div>
       </div>
     </div>
   )

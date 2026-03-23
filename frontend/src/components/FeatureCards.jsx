@@ -30,17 +30,17 @@ export default function FeatureCards() {
   ]
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-3">
       {features.map((feature, index) => (
         <Link
           key={index}
           to={feature.link}
-          className="bg-white rounded-xl shadow-md border border-gray-200 p-6 hover:shadow-lg transition-all duration-200 hover:scale-105"
+          className="rounded-xl border border-gray-200 bg-white p-5 shadow-md transition-all duration-200 hover:scale-[1.02] hover:shadow-lg sm:p-6"
         >
-          <div className={`w-14 h-14 bg-gradient-to-br ${feature.color} rounded-xl flex items-center justify-center text-3xl mb-4 shadow-md`}>
+          <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br text-2xl shadow-md sm:h-14 sm:w-14 sm:text-3xl ${feature.color}`}>
             {feature.icon}
           </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">{feature.title}</h3>
+          <h3 className="mb-2 text-lg font-bold text-gray-900 sm:text-xl">{feature.title}</h3>
           <p className="text-gray-600 text-sm">{feature.description}</p>
         </Link>
       ))}

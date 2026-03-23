@@ -3,11 +3,12 @@ import { useI18n } from '../../i18n/index.jsx'
 
 export default function Footer() {
   const { t } = useI18n()
+
   return (
-    <footer className="bg-white mt-8 border-t">
-      <div className="container mx-auto px-4 py-6 flex justify-between items-center">
-        <div className="text-sm text-gray-700">© {new Date().getFullYear()} CFVSTS. All rights reserved.</div>
-        <div className="flex gap-4 text-sm">
+    <footer className="mt-8 border-t bg-white">
+      <div className="container mx-auto flex flex-col gap-3 px-4 py-5 text-center sm:flex-row sm:items-center sm:justify-between sm:text-left">
+        <div className="text-sm text-gray-700">Copyright {new Date().getFullYear()} CFVSTS. All rights reserved.</div>
+        <div className="flex flex-wrap items-center justify-center gap-3 text-sm sm:justify-end sm:gap-4">
           <a href="/docs">{t('footer.about')}</a>
           <a href="/docs">{t('footer.contact')}</a>
           <a href="/docs">{t('footer.privacy')}</a>

@@ -26,7 +26,7 @@ export default function App() {
     <I18nProvider>
       <div className="min-h-screen flex flex-col bg-gray-50 text-gray-900">
         <Navbar />
-        <main className="flex-1 container mx-auto px-2 py-8">
+        <main className="container mx-auto flex-1 px-3 py-4 sm:px-4 sm:py-8">
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/features" element={<Features />} />
@@ -38,8 +38,8 @@ export default function App() {
             <Route path="/admin" element={<Admin />} />
             <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['normal']}><Dashboard /></ProtectedRoute>} />
             <Route path="/phishing-detection" element={<PhishingDetection />} />
-            {/* <Route path="/women-safety" element={<WomenSafety />} /> */}
-            <Route path="/cyber-fraud-report" element={<CyberFraudReport />} />
+            <Route path="/women-safety" element={<ProtectedRoute><WomenSafety /></ProtectedRoute>} />
+            <Route path="/cyber-fraud-report" element={<ProtectedRoute><CyberFraudReport /></ProtectedRoute>} />
             <Route path="/police-dashboard" element={<ProtectedRoute allowedRoles={['police']}><PoliceDashboard /></ProtectedRoute>} />
             <Route path="/bank-dashboard" element={<ProtectedRoute allowedRoles={['bank']}><BankDashboard /></ProtectedRoute>} />
             <Route path="/police-stats" element={<ProtectedRoute allowedRoles={['police']}><PoliceStats /></ProtectedRoute>} />

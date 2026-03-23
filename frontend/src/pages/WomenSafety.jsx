@@ -13,7 +13,6 @@ export default function WomenSafety() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    // This is a placeholder - replace with actual API call
     console.log('Report submitted:', formData)
     setSubmitted(true)
     setTimeout(() => {
@@ -37,32 +36,36 @@ export default function WomenSafety() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto">
-      <div className="bg-white rounded-xl shadow-lg p-8">
+    <div className="mx-auto max-w-3xl px-1 sm:px-0">
+      <div className="rounded-xl bg-white p-4 shadow-lg sm:p-8">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Women Safety Harassment Report</h1>
-          <p className="text-gray-600">Report any harassment or safety concern. Your report will be handled with confidentiality.</p>
+          <h1 className="mb-2 text-2xl font-bold text-gray-900 sm:text-3xl">Women Safety Harassment Report</h1>
+          <p className="text-sm text-gray-600 sm:text-base">
+            Report any harassment or safety concern. Your report will be handled with confidentiality.
+          </p>
         </div>
 
         {submitted ? (
-          <div className="p-6 bg-green-50 border-2 border-green-200 rounded-lg text-center">
-            <svg className="w-16 h-16 text-green-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="rounded-lg border-2 border-green-200 bg-green-50 p-5 text-center sm:p-6">
+            <svg className="mx-auto mb-4 h-12 w-12 text-green-600 sm:h-16 sm:w-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <h3 className="text-xl font-semibold text-green-900 mb-2">Report Submitted Successfully</h3>
-            <p className="text-green-700">Your report has been received. Authorities will be notified and appropriate action will be taken.</p>
+            <h3 className="mb-2 text-lg font-semibold text-green-900 sm:text-xl">Report Submitted Successfully</h3>
+            <p className="text-sm text-green-700 sm:text-base">
+              Your report has been received. Authorities will be notified and appropriate action will be taken.
+            </p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="mb-2 block text-sm font-medium text-gray-700">
                 Type of Incident <span className="text-red-500">*</span>
               </label>
               <select
                 name="incidentType"
                 value={formData.incidentType}
                 onChange={handleChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 required
               >
                 <option value="">Select incident type</option>
@@ -74,9 +77,9 @@ export default function WomenSafety() {
               </select>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="mb-2 block text-sm font-medium text-gray-700">
                   Date <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -84,13 +87,13 @@ export default function WomenSafety() {
                   name="date"
                   value={formData.date}
                   onChange={handleChange}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="mb-2 block text-sm font-medium text-gray-700">
                   Time <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -98,14 +101,14 @@ export default function WomenSafety() {
                   name="time"
                   value={formData.time}
                   onChange={handleChange}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   required
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="mb-2 block text-sm font-medium text-gray-700">
                 Location <span className="text-red-500">*</span>
               </label>
               <input
@@ -114,13 +117,13 @@ export default function WomenSafety() {
                 value={formData.location}
                 onChange={handleChange}
                 placeholder="Enter location where incident occurred"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 required
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="mb-2 block text-sm font-medium text-gray-700">
                 Description <span className="text-red-500">*</span>
               </label>
               <textarea
@@ -129,37 +132,35 @@ export default function WomenSafety() {
                 onChange={handleChange}
                 rows={5}
                 placeholder="Provide detailed description of the incident"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 required
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Contact Number (Optional)
-              </label>
+              <label className="mb-2 block text-sm font-medium text-gray-700">Contact Number (Optional)</label>
               <input
                 type="tel"
                 name="contact"
                 value={formData.contact}
                 onChange={handleChange}
                 placeholder="Your contact number for follow-up"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
 
             <button
               type="submit"
-              className="w-full px-6 py-3 bg-gradient-to-r from-pink-600 to-rose-600 text-white rounded-lg font-medium hover:from-pink-700 hover:to-rose-700 transition-all duration-200 shadow-md hover:shadow-lg"
+              className="w-full rounded-lg bg-gradient-to-r from-pink-600 to-rose-600 px-6 py-3 font-medium text-white shadow-md transition-all duration-200 hover:from-pink-700 hover:to-rose-700 hover:shadow-lg"
             >
               Submit Report
             </button>
           </form>
         )}
 
-        <div className="mt-8 p-4 bg-pink-50 rounded-lg border border-pink-200">
-          <h3 className="font-semibold text-pink-900 mb-2">🆘 Emergency Contacts</h3>
-          <ul className="text-sm text-pink-800 space-y-1">
+        <div className="mt-8 rounded-lg border border-pink-200 bg-pink-50 p-4">
+          <h3 className="mb-2 font-semibold text-pink-900">Emergency Contacts</h3>
+          <ul className="space-y-1 text-sm text-pink-800">
             <li><strong>Women Helpline:</strong> 1091</li>
             <li><strong>Police:</strong> 100</li>
             <li><strong>Emergency:</strong> 112</li>
@@ -169,4 +170,3 @@ export default function WomenSafety() {
     </div>
   )
 }
-

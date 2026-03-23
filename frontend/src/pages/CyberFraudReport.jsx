@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { db } from "../../firebase.js";
-import { collection, addDoc, doc, setDoc, query, where, onSnapshot, getDocs } from "firebase/firestore";
+import { collection, addDoc, setDoc, query, where, onSnapshot, getDocs } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext.jsx";
 import { notifyNewComplaint } from "../utils/notifications.js";
 
@@ -382,7 +382,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
 
       {/* Cases List */}
       <div className="space-y-4">
-        {cases.map((c, index) => {
+        {cases.map((c) => {
           const statusConfig = getStatusConfig(c.status);
           const progress = getStatusProgress(c.status);
           const isExpanded = expandedCase === c.id;
@@ -585,7 +585,6 @@ function CasesList({ user, profile, onSwitchToFile }) {
                             
                             <div className="space-y-6">
                               {c.timeline.map((item, idx) => {
-                                const isLast = idx === c.timeline.length - 1;
                                 return (
                                   <div key={idx} className="relative flex items-start gap-4">
                                     {/* Timeline Dot */}
@@ -1185,29 +1184,29 @@ export default function CyberFraudReport({ user: userProp }) {
   }
 
   return (
-    <div className="min-h-[calc(100vh-200px)] py-8">
+    <div className="min-h-[calc(100vh-200px)] py-6 sm:py-8">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header Section */}
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-4 mb-6">
-            <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-yellow-500 rounded-2xl flex items-center justify-center shadow-lg">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="mb-6 flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-yellow-500 shadow-lg sm:h-16 sm:w-16">
+              <svg className="h-7 w-7 text-white sm:h-8 sm:w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
             <div>
-              <h1 className="text-4xl font-bold text-gray-900 mb-2">Cyber Fraud</h1>
-              <p className="text-gray-600 text-lg">Report and track cyber fraud incidents</p>
+              <h1 className="mb-2 text-3xl font-bold text-gray-900 sm:text-4xl">Cyber Fraud</h1>
+              <p className="text-base text-gray-600 sm:text-lg">Report and track cyber fraud incidents</p>
             </div>
           </div>
 
           {/* Toggle Switch */}
-          <div className="flex items-center justify-center gap-4 mb-6">
-            <div className="bg-white rounded-full p-1.5 shadow-lg border border-gray-200 inline-flex">
+          <div className="mb-6 flex items-center justify-center">
+            <div className="inline-flex flex-wrap justify-center gap-2 rounded-2xl border border-gray-200 bg-white p-1.5 shadow-lg sm:flex-nowrap sm:rounded-full">
               <button
                 type="button"
                 onClick={() => setViewMode('file')}
-                className={`px-6 py-3 rounded-full font-semibold text-sm transition-all duration-300 flex items-center gap-2 ${
+                className={`flex items-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition-all duration-300 sm:px-6 ${
                   viewMode === 'file'
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-md'
                     : 'text-gray-600 hover:text-gray-900'
@@ -1221,7 +1220,7 @@ export default function CyberFraudReport({ user: userProp }) {
               <button
                 type="button"
                 onClick={() => setViewMode('track')}
-                className={`px-6 py-3 rounded-full font-semibold text-sm transition-all duration-300 flex items-center gap-2 ${
+                className={`flex items-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition-all duration-300 sm:px-6 ${
                   viewMode === 'track'
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-md'
                     : 'text-gray-600 hover:text-gray-900'
@@ -1240,7 +1239,7 @@ export default function CyberFraudReport({ user: userProp }) {
         {viewMode === 'track' ? (
           <CasesList user={user} profile={profile} onSwitchToFile={() => setViewMode('file')} />
         ) : (
-          <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-xl border border-gray-200 p-6 sm:p-8 lg:p-10">
+          <form onSubmit={handleSubmit} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-xl sm:p-8 lg:p-10">
 
           {/* Success/Error Messages */}
           {message.type === 'success' && (
@@ -1277,11 +1276,11 @@ export default function CyberFraudReport({ user: userProp }) {
 
           {/* Progress Indicator */}
           <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
+            <div className="mb-4 flex gap-3 overflow-x-auto pb-2">
               <button
                 type="button"
                 onClick={() => setCurrentSection(1)}
-                className={`px-5 py-3 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 ${
+                className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
                   currentSection === 1 
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
                     : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
@@ -1292,11 +1291,11 @@ export default function CyberFraudReport({ user: userProp }) {
                 </svg>
                 1. Personal Details
               </button>
-              <div className={`h-1.5 flex-1 mx-3 rounded-full transition-all duration-300 ${currentSection >= 2 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-amber-200'}`}></div>
+              <div className={`hidden h-1.5 flex-1 rounded-full transition-all duration-300 md:block ${currentSection >= 2 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-amber-200'}`}></div>
               <button
                 type="button"
                 onClick={() => currentSection >= 2 && setCurrentSection(2)}
-                className={`px-5 py-3 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 ${
+                className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
                   currentSection === 2 
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
                     : currentSection > 2
@@ -1309,11 +1308,11 @@ export default function CyberFraudReport({ user: userProp }) {
                 </svg>
                 2. Incident Details
               </button>
-              <div className={`h-1.5 flex-1 mx-3 rounded-full transition-all duration-300 ${currentSection >= 3 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-amber-200'}`}></div>
+              <div className={`hidden h-1.5 flex-1 rounded-full transition-all duration-300 md:block ${currentSection >= 3 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-amber-200'}`}></div>
               <button
                 type="button"
                 onClick={() => currentSection >= 3 && setCurrentSection(3)}
-                className={`px-5 py-3 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 ${
+                className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
                   currentSection === 3 
                     ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
