@@ -169,9 +169,9 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-200px)] flex items-center justify-center py-12 px-4">
+    <div className="min-h-[calc(100vh-200px)] flex items-center justify-center py-6 sm:py-10 md:py-12 px-3 sm:px-4">
       <div className="max-w-4xl w-full">
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl overflow-hidden">
           <div className="md:flex">
             <div className="hidden md:block md:w-1/2 bg-gradient-to-br from-amber-500 via-yellow-500 to-amber-600 p-12 flex flex-col justify-center">
               <div className="text-white">
@@ -192,31 +192,36 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="md:w-1/2 p-8 md:p-12">
-              <div className="mb-8">
-                <h2 className="text-3xl font-bold text-gray-900 mb-2">Sign In</h2>
-                <p className="text-gray-600">Use your account credentials or continue with Google.</p>
+            <div className="md:w-1/2 p-5 sm:p-8 md:p-12">
+              {/* <div className="md:hidden mb-5 rounded-lg bg-amber-50 border border-amber-100 px-4 py-3">
+                <p className="font-semibold text-amber-900">User Login</p>
+                <p className="text-xs text-amber-700">Email, password, or Google sign-in</p>
+              </div> */}
+
+              <div className="mb-6 sm:mb-8">
+                <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">Sign In</h2>
+                <p className="text-sm sm:text-base text-gray-600">Use your account credentials or continue with Google.</p>
               </div>
 
               {error && (
-                <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-md text-sm">
+                <div className="mb-6 p-3 sm:p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-md text-sm">
                   {error}
                 </div>
               )}
 
               {notice && (
-                <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 text-blue-700 rounded-md text-sm">
+                <div className="mb-6 p-3 sm:p-4 bg-blue-50 border-l-4 border-blue-500 text-blue-700 rounded-md text-sm">
                   {notice}
                 </div>
               )}
 
-              <div className="space-y-6">
-                <form onSubmit={handleEmailLogin} className="space-y-6">
+              <div className="space-y-5 sm:space-y-6">
+                <form onSubmit={handleEmailLogin} className="space-y-5 sm:space-y-6">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Email</label>
                     <input
                       type="email"
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
+                      className="w-full px-4 py-3 sm:py-3.5 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
                       placeholder="you@example.com"
                       value={email}
                       onChange={e => setEmail(e.target.value)}
@@ -228,7 +233,7 @@ export default function Login() {
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
                     <input
                       type="password"
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
+                      className="w-full px-4 py-3 sm:py-3.5 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
                       placeholder="Enter your password"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
@@ -239,7 +244,7 @@ export default function Login() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white py-3 rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white py-3 sm:py-3.5 rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {loading ? 'Signing in...' : 'Sign In with Email'}
                   </button>
@@ -258,22 +263,22 @@ export default function Login() {
                   type="button"
                   onClick={handleGoogleLogin}
                   disabled={loading}
-                  className="w-full border-2 border-gray-300 text-gray-800 py-3 rounded-lg font-semibold hover:border-gray-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full border-2 border-gray-300 text-gray-800 py-3 sm:py-3.5 rounded-lg font-semibold hover:border-gray-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? 'Please wait...' : 'Continue with Google'}
                 </button>
               </div>
 
-              <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs sm:text-sm text-amber-900">
                 <p className="font-semibold">Official login</p>
-                <div className="mt-1 flex items-center gap-3">
+                <div className="mt-2 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                   <Link to="/login/police" className="underline hover:text-amber-700">Police Login</Link>
-                  <span>|</span>
+                  <span className="hidden sm:inline">|</span>
                   <Link to="/login/bank" className="underline hover:text-amber-700">Bank Login</Link>
                 </div>
               </div>
 
-              <div className="mt-8 pt-6 border-t border-gray-200">
+              <div className="mt-6 sm:mt-8 pt-5 sm:pt-6 border-t border-gray-200">
                 <p className="text-xs text-center text-gray-500">
                   User login supports Email/Password and Google sign-in.
                 </p>
