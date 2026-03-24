@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { collection, query, onSnapshot, orderBy, doc, updateDoc, getDoc, getDocs } from "firebase/firestore";
 import { db } from "../../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -65,7 +65,7 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
         }
         const byteArray = new Uint8Array(byteNumbers);
         const blob = new Blob([byteArray], { type: contentType });
-        
+
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -117,7 +117,7 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
             const fileName = fileItem.name || `File ${idx + 1}`;
             const isUrl = typeof fileItem === 'string' || fileItem.url;
             const fileSize = fileItem.size ? `(${(fileItem.size / 1024).toFixed(1)} KB)` : '';
-            
+
             if (isUrl) {
               return (
                 <a
@@ -171,6 +171,7 @@ function createTimelineEntry(status, note, at, by) {
 }
 
 export default function PoliceDashboard() {
+  const caseDetailsRef = useRef(null);
   const { profile, loading, logout } = useAuth();
   const { locale } = useI18n();
   const [cases, setCases] = useState([]);
@@ -201,11 +202,11 @@ export default function PoliceDashboard() {
   const formatDateTime = (value, fallback = 'Unknown') => (value ? new Date(value).toLocaleString(locale) : fallback);
 
   useEffect(() => {
-    const q = query(collection(db, 'cases'), orderBy('createdAt','desc'));
-    const unsub = onSnapshot(q, 
+    const q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q,
       (snap) => {
-        const arr = []; 
-        snap.forEach(d => arr.push({ ...d.data(), id: d.id })); 
+        const arr = [];
+        snap.forEach(d => arr.push({ ...d.data(), id: d.id }));
         setCases(arr);
       },
       (error) => {
@@ -234,20 +235,20 @@ export default function PoliceDashboard() {
   // Apply filters and sorting
   useEffect(() => {
     let filtered = [...cases];
-    
+
     if (filters.status !== 'all') {
       filtered = filtered.filter(c => c.status === filters.status);
     }
-    
+
     if (filters.search) {
       const searchLower = filters.search.toLowerCase();
-      filtered = filtered.filter(c => 
+      filtered = filtered.filter(c =>
         c.caseId?.toLowerCase().includes(searchLower) ||
         c.fraudType?.toLowerCase().includes(searchLower) ||
         c.victimName?.toLowerCase().includes(searchLower)
       );
     }
-    
+
     // Apply sorting
     filtered.sort((a, b) => {
       const aFocused = matchesCaseIdentifier(a, focusedCaseId);
@@ -268,7 +269,7 @@ export default function PoliceDashboard() {
       }
       return 0;
     });
-    
+
     setFilteredCases(filtered);
   }, [cases, filters, focusedCaseId]);
 
@@ -332,8 +333,8 @@ export default function PoliceDashboard() {
               <li>Click "Update" and refresh this page</li>
             </ol>
           </div>
-          <button 
-            onClick={() => navigate('/login/police')} 
+          <button
+            onClick={() => navigate('/login/police')}
             className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 text-white py-3 rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl"
           >
             Go to Police Login
@@ -376,7 +377,7 @@ export default function PoliceDashboard() {
       const currentData = currentDoc.data();
       const currentTracking = currentData?.tracking || [];
       const now = Date.now();
-      
+
       await updateDoc(docRef, {
         viewedAt: now,
         tracking: [...currentTracking, {
@@ -387,7 +388,7 @@ export default function PoliceDashboard() {
         }],
         updatedAt: now
       });
-      
+
       // Notify victim that case was viewed
       if (currentData.victimUid) {
         try {
@@ -401,14 +402,16 @@ export default function PoliceDashboard() {
           console.error('Failed to notify victim:', notifError)
         }
       }
-      
+
       setSuccessMsg('Case marked as viewed successfully');
-      const updated = { ...selected, viewedAt: now, tracking: [...currentTracking, {
-        event: 'Case Viewed',
-        description: 'Police officer reviewed the case',
-        timestamp: now,
-        by: officerName
-      }] };
+      const updated = {
+        ...selected, viewedAt: now, tracking: [...currentTracking, {
+          event: 'Case Viewed',
+          description: 'Police officer reviewed the case',
+          timestamp: now,
+          by: officerName
+        }]
+      };
       setSelected(updated);
     } catch (err) {
       console.error('Error marking case as viewed:', err);
@@ -427,7 +430,7 @@ export default function PoliceDashboard() {
       setErrorMsg('Please enter FIR number');
       return;
     }
-    
+
     setUpdating(true);
     setErrorMsg("");
     try {
@@ -440,7 +443,7 @@ export default function PoliceDashboard() {
       const currentTracking = currentData?.tracking || [];
       const currentTimeline = currentData?.timeline || [];
       const now = Date.now();
-      
+
       await updateDoc(docRef, {
         firFiledAt: now,
         firNumber: firNumber.trim(),
@@ -454,7 +457,7 @@ export default function PoliceDashboard() {
         timeline: [...currentTimeline, createTimelineEntry('In Process', `FIR filed: ${firNumber.trim()}`, now, officerName)],
         updatedAt: now
       });
-      
+
       // Notify victim about FIR filing
       if (currentData.victimUid) {
         try {
@@ -468,11 +471,11 @@ export default function PoliceDashboard() {
           console.error('Failed to notify victim:', notifError)
         }
       }
-      
+
       setSuccessMsg(`FIR filed successfully with number: ${firNumber.trim()}`);
       setShowFirModal(false);
       setFirNumber("");
-      
+
       // Update selected case with all new data including tracking
       const updatedTracking = [...currentTracking, {
         event: 'FIR Filed',
@@ -480,10 +483,10 @@ export default function PoliceDashboard() {
         timestamp: now,
         by: officerName
       }];
-      const updated = { 
-        ...selected, 
-        firFiledAt: now, 
-        firNumber: firNumber.trim(), 
+      const updated = {
+        ...selected,
+        firFiledAt: now,
+        firNumber: firNumber.trim(),
         status: 'In Process',
         tracking: updatedTracking
       };
@@ -505,7 +508,7 @@ export default function PoliceDashboard() {
       setErrorMsg('Please enter a message');
       return;
     }
-    
+
     setUpdating(true);
     setErrorMsg("");
     try {
@@ -517,19 +520,19 @@ export default function PoliceDashboard() {
       const currentData = currentDoc.data();
       const currentMessages = currentData?.messages || [];
       const now = Date.now();
-      
+
       const newMessage = {
         from: 'police',
         message: messageText.trim(),
         timestamp: now,
         senderName: officerName
       };
-      
+
       await updateDoc(docRef, {
         messages: [...currentMessages, newMessage],
         updatedAt: now
       });
-      
+
       // Notify victim about police message
       if (currentData.victimUid) {
         try {
@@ -543,10 +546,10 @@ export default function PoliceDashboard() {
           console.error('Failed to notify victim:', notifError)
         }
       }
-      
+
       setSuccessMsg('Message sent successfully');
       setMessageText("");
-      
+
       const updated = { ...selected, messages: [...currentMessages, newMessage] };
       setSelected(updated);
     } catch (err) {
@@ -566,7 +569,7 @@ export default function PoliceDashboard() {
       setErrorMsg('Please enter a case note');
       return;
     }
-    
+
     setUpdating(true);
     setErrorMsg("");
     try {
@@ -578,7 +581,7 @@ export default function PoliceDashboard() {
       const currentData = currentDoc.data();
       const currentTracking = currentData?.tracking || [];
       const now = Date.now();
-      
+
       await updateDoc(docRef, {
         tracking: [...currentTracking, {
           event: 'Case Note Added',
@@ -588,7 +591,7 @@ export default function PoliceDashboard() {
         }],
         updatedAt: now
       });
-      
+
       // Notify victim about case note
       if (currentData.victimUid) {
         try {
@@ -602,17 +605,19 @@ export default function PoliceDashboard() {
           console.error('Failed to notify victim:', notifError)
         }
       }
-      
+
       setSuccessMsg('Case note added successfully');
       setShowNoteModal(false);
       setCaseNote("");
-      
-      const updated = { ...selected, tracking: [...currentTracking, {
-        event: 'Case Note Added',
-        description: caseNote.trim(),
-        timestamp: now,
-        by: officerName
-      }] };
+
+      const updated = {
+        ...selected, tracking: [...currentTracking, {
+          event: 'Case Note Added',
+          description: caseNote.trim(),
+          timestamp: now,
+          by: officerName
+        }]
+      };
       setSelected(updated);
     } catch (err) {
       console.error('Error adding case note:', err);
@@ -626,7 +631,7 @@ export default function PoliceDashboard() {
     }
   }
 
-  async function markStatus(caseDocId, status, note='') {
+  async function markStatus(caseDocId, status, note = '') {
     setUpdating(true);
     setErrorMsg("");
     try {
@@ -661,7 +666,7 @@ export default function PoliceDashboard() {
       }
 
       await updateDoc(docRef, updatePayload);
-      
+
       // Notify victim about status update
       if (currentData.victimUid) {
         try {
@@ -675,7 +680,7 @@ export default function PoliceDashboard() {
           console.error('Failed to notify victim:', notifError)
         }
       }
-      
+
       setSuccessMsg(`Case status updated to: ${status}`);
       const updated = { ...selected, ...updatePayload };
       setSelected(updated);
@@ -736,7 +741,7 @@ export default function PoliceDashboard() {
       };
 
       await updateDoc(docRef, updatePayload);
-      
+
       // Notify victim about bank investigation request
       if (currentData.victimUid) {
         try {
@@ -750,7 +755,7 @@ export default function PoliceDashboard() {
           console.error('Failed to notify victim:', notifError)
         }
       }
-      
+
       // Notify all bank users about investigation request
       try {
         await createNotificationForRole(
@@ -763,7 +768,7 @@ export default function PoliceDashboard() {
       } catch (notifError) {
         console.error('Failed to notify bank:', notifError)
       }
-      
+
       setSuccessMsg('Bank investigation requested successfully');
       const updated = { ...selected, ...updatePayload };
       setSelected(updated);
@@ -791,11 +796,11 @@ export default function PoliceDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-amber-50/30 to-gray-50 p-4 sm:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-amber-50/30 to-gray-50 p-2 sm:p-4 md:p-6">
       {/* Header */}
-      <div className="mb-8">
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-4 sm:p-6 mb-6">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="mb-4 md:mb-8">
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-3 sm:p-4 md:p-6 mb-4 md:mb-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-4">
             <div>
               <h1 className="mb-2 flex flex-col gap-3 text-2xl font-bold text-transparent sm:flex-row sm:items-center sm:text-4xl bg-gradient-to-r from-amber-600 to-yellow-600 bg-clip-text">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-yellow-500 shadow-md sm:h-12 sm:w-12">
@@ -809,8 +814,8 @@ export default function PoliceDashboard() {
               <p className="text-gray-500 text-sm mt-1">RBI/NPCI Compliant System</p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
-              <button 
-                onClick={() => navigate('/police-stats')} 
+              <button
+                onClick={() => navigate('/police-stats')}
                 className="flex items-center justify-center gap-2 rounded-lg border-2 border-gray-300 bg-white px-4 py-2.5 font-semibold text-gray-700 shadow-sm transition-all duration-200 hover:border-gray-400 hover:bg-gray-50 hover:shadow-md"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -818,7 +823,7 @@ export default function PoliceDashboard() {
                 </svg>
                 Statistics
               </button>
-              <button 
+              <button
                 onClick={handleLogout}
                 className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-2.5 font-semibold text-white shadow-md transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-lg"
               >
@@ -860,7 +865,7 @@ export default function PoliceDashboard() {
 
         {/* Filters */}
         <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-5">
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-2.5">Filter by Status</label>
               <select
@@ -902,7 +907,7 @@ export default function PoliceDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
         {/* Cases List */}
         <div className="lg:col-span-1">
           <div className="bg-white rounded-xl shadow-md border border-gray-200 p-5 mb-6">
@@ -922,7 +927,7 @@ export default function PoliceDashboard() {
             </div>
           </div>
 
-          <div className="space-y-3 max-h-[calc(100vh-400px)] overflow-y-auto pr-2">
+          <div className="space-y-2 md:space-y-3 max-h-[calc(100vh-300px)] overflow-y-auto pr-1 md:pr-2">
             {filteredCases.map((c, index) => (
               <div
                 key={c.id || c.caseId}
@@ -931,10 +936,19 @@ export default function PoliceDashboard() {
                   if (!c.viewedAt) {
                     markCaseViewed(c.id);
                   }
+
+                  // Smooth scroll to case details on mobile
+                  if (window.innerWidth < 1024) {
+                    setTimeout(() => {
+                      caseDetailsRef.current?.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'nearest'
+                      });
+                    }, 100);
+                  }
                 }}
-                className={`bg-white rounded-xl shadow-sm border-2 cursor-pointer transition-all duration-200 p-4 hover:shadow-md hover:border-amber-300 ${
-                  selected?.id === c.id ? 'ring-2 ring-amber-400 border-amber-400 shadow-lg scale-[1.01]' : 'border-gray-200'
-                }`}
+                className={`bg-white rounded-xl shadow-sm border-2 cursor-pointer transition-all duration-200 p-4 hover:shadow-md hover:border-amber-300 ${selected?.id === c.id ? 'ring-2 ring-amber-400 border-amber-400 shadow-lg scale-[1.01]' : 'border-gray-200'
+                  }`}
                 style={{ animationDelay: `${index * 0.05}s` }}
               >
                 <div className="flex items-center justify-between mb-3">
@@ -969,7 +983,7 @@ export default function PoliceDashboard() {
         </div>
 
         {/* Case Details */}
-        <div className="lg:col-span-2">
+        <div ref={caseDetailsRef} className="lg:col-span-2">
           {selected ? (
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-8">
               <div className="flex items-center justify-between mb-8 pb-6 border-b-2 border-gray-200">
@@ -994,7 +1008,7 @@ export default function PoliceDashboard() {
                     {(() => {
                       // Build unified timeline array
                       const timeline = [];
-                      
+
                       // Add complaint filed
                       if (selected.createdAt) {
                         timeline.push({
@@ -1006,7 +1020,7 @@ export default function PoliceDashboard() {
                           isDuplicate: false
                         });
                       }
-                      
+
                       // First, add all tracking events (they have the most complete info)
                       if (selected.tracking && selected.tracking.length > 0) {
                         selected.tracking.forEach(track => {
@@ -1021,7 +1035,7 @@ export default function PoliceDashboard() {
                           } else if (track.event === 'Bank Investigation Requested') {
                             color = 'green';
                           }
-                          
+
                           timeline.push({
                             ...track,
                             color: color,
@@ -1030,11 +1044,11 @@ export default function PoliceDashboard() {
                           });
                         });
                       }
-                      
+
                       // Then, add viewedAt/firFiledAt only if they don't exist in tracking
                       // (This handles cases where the fields exist but tracking wasn't updated)
                       if (selected.viewedAt) {
-                        const alreadyInTracking = timeline.some(t => 
+                        const alreadyInTracking = timeline.some(t =>
                           t.event === 'Case Viewed' && Math.abs(t.timestamp - selected.viewedAt) < 1000
                         );
                         if (!alreadyInTracking) {
@@ -1048,9 +1062,9 @@ export default function PoliceDashboard() {
                           });
                         }
                       }
-                      
+
                       if (selected.firFiledAt) {
-                        const alreadyInTracking = timeline.some(t => 
+                        const alreadyInTracking = timeline.some(t =>
                           t.event === 'FIR Filed' && Math.abs(t.timestamp - selected.firFiledAt) < 1000
                         );
                         if (!alreadyInTracking) {
@@ -1065,17 +1079,17 @@ export default function PoliceDashboard() {
                           });
                         }
                       }
-                      
+
                       // Sort by timestamp
                       timeline.sort((a, b) => a.timestamp - b.timestamp);
-                      
+
                       return (
                         <div className="relative">
                           {/* Vertical line connecting all points */}
                           {timeline.length > 1 && (
                             <div className="absolute left-4 top-4 bottom-4 w-1 bg-gradient-to-b from-amber-300 via-amber-400 to-amber-300 rounded-full shadow-sm"></div>
                           )}
-                          
+
                           <div className="space-y-0">
                             {timeline.map((item, idx) => {
                               const colorClasses = {
@@ -1085,7 +1099,7 @@ export default function PoliceDashboard() {
                                 cyan: 'bg-gray-500 border-gray-600 shadow-gray-200'
                               };
                               const colorClass = colorClasses[item.color] || 'bg-gray-500 border-gray-600 shadow-gray-200';
-                              
+
                               return (
                                 <div key={idx} className="flex items-start gap-4 relative pb-6">
                                   {/* Timeline point */}
@@ -1094,7 +1108,7 @@ export default function PoliceDashboard() {
                                       <div className="w-3 h-3 bg-white rounded-full"></div>
                                     </div>
                                   </div>
-                                  
+
                                   {/* Content */}
                                   <div className="flex-1 bg-white rounded-lg p-4 border border-gray-200 shadow-sm">
                                     <p className="text-gray-900 font-bold text-base mb-1">{item.event}</p>
@@ -1177,7 +1191,7 @@ export default function PoliceDashboard() {
                           </div>
                         )}
                       </div>
-                      
+
                       {/* Map Display - OpenStreetMap Embed */}
                       <div className="mb-4">
                         <div className="bg-white rounded-lg border border-amber-200 overflow-hidden">
@@ -1244,7 +1258,7 @@ export default function PoliceDashboard() {
                 {/* Personal Details Section */}
                 <div className="border-2 border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
                   <button
-                    onClick={() => setExpandedSections({...expandedSections, personalDetails: !expandedSections.personalDetails})}
+                    onClick={() => setExpandedSections({ ...expandedSections, personalDetails: !expandedSections.personalDetails })}
                     className="w-full px-5 py-4 bg-gradient-to-r from-amber-50 to-yellow-50 hover:from-amber-100 hover:to-yellow-100 transition-all duration-200 flex items-center justify-between border-b-2 border-gray-200"
                   >
                     <div className="flex items-center gap-3">
@@ -1255,10 +1269,10 @@ export default function PoliceDashboard() {
                       </div>
                       <h3 className="text-lg font-bold text-gray-900">Personal Details</h3>
                     </div>
-                    <svg 
+                    <svg
                       className={`w-6 h-6 text-amber-700 transition-transform duration-200 ${expandedSections.personalDetails ? 'rotate-180' : ''}`}
-                      fill="none" 
-                      stroke="currentColor" 
+                      fill="none"
+                      stroke="currentColor"
                       viewBox="0 0 24 24"
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -1331,7 +1345,7 @@ export default function PoliceDashboard() {
                 {/* Incident Details Section */}
                 <div className="border-2 border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
                   <button
-                    onClick={() => setExpandedSections({...expandedSections, incidentDetails: !expandedSections.incidentDetails})}
+                    onClick={() => setExpandedSections({ ...expandedSections, incidentDetails: !expandedSections.incidentDetails })}
                     className="w-full px-5 py-4 bg-gradient-to-r from-amber-50 to-yellow-50 hover:from-amber-100 hover:to-yellow-100 transition-all duration-200 flex items-center justify-between border-b-2 border-gray-200"
                   >
                     <div className="flex items-center gap-3">
@@ -1342,10 +1356,10 @@ export default function PoliceDashboard() {
                       </div>
                       <h3 className="text-lg font-bold text-gray-900">Incident Details</h3>
                     </div>
-                    <svg 
+                    <svg
                       className={`w-6 h-6 text-amber-700 transition-transform duration-200 ${expandedSections.incidentDetails ? 'rotate-180' : ''}`}
-                      fill="none" 
-                      stroke="currentColor" 
+                      fill="none"
+                      stroke="currentColor"
                       viewBox="0 0 24 24"
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -1357,16 +1371,16 @@ export default function PoliceDashboard() {
                         <div>
                           <label className="text-xs font-semibold text-gray-500 uppercase">Date & Time of Incident</label>
                           <p className="text-gray-800 font-medium mt-1">
-                            {selected.incidentDate 
-                              ? formatDateTime(selected.incidentDate) 
+                            {selected.incidentDate
+                              ? formatDateTime(selected.incidentDate)
                               : 'Not provided'}
                           </p>
                         </div>
                         <div>
                           <label className="text-xs font-semibold text-gray-500 uppercase">Date & Time of Reporting</label>
                           <p className="text-gray-800 font-medium mt-1">
-                            {selected.reportingDate 
-                              ? formatDateTime(selected.reportingDate) 
+                            {selected.reportingDate
+                              ? formatDateTime(selected.reportingDate)
                               : 'Not provided'}
                           </p>
                         </div>
@@ -1433,7 +1447,7 @@ export default function PoliceDashboard() {
                 {selected.transactions && selected.transactions[0] && (
                   <div className="border-2 border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
                     <button
-                      onClick={() => setExpandedSections({...expandedSections, transactionDetails: !expandedSections.transactionDetails})}
+                      onClick={() => setExpandedSections({ ...expandedSections, transactionDetails: !expandedSections.transactionDetails })}
                       className="w-full px-5 py-4 bg-gradient-to-r from-amber-50 to-yellow-50 hover:from-amber-100 hover:to-yellow-100 transition-all duration-200 flex items-center justify-between border-b-2 border-gray-200"
                     >
                       <div className="flex items-center gap-3">
@@ -1444,10 +1458,10 @@ export default function PoliceDashboard() {
                         </div>
                         <h3 className="text-lg font-bold text-gray-900">Transaction Details</h3>
                       </div>
-                      <svg 
+                      <svg
                         className={`w-6 h-6 text-amber-700 transition-transform duration-200 ${expandedSections.transactionDetails ? 'rotate-180' : ''}`}
-                        fill="none" 
-                        stroke="currentColor" 
+                        fill="none"
+                        stroke="currentColor"
                         viewBox="0 0 24 24"
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -1519,20 +1533,22 @@ export default function PoliceDashboard() {
                       <p className="text-gray-500 text-sm">No messages yet</p>
                     )}
                   </div>
-                  <div className="flex gap-3">
-                    <input
-                      type="text"
-                      value={messageText}
-                      onChange={(e) => setMessageText(e.target.value)}
-                      placeholder="Type a message to victim..."
-                      className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all text-gray-700 placeholder-gray-400"
-                      onKeyPress={(e) => e.key === 'Enter' && !updating && sendMessage(selected.id)}
-                      disabled={updating}
-                    />
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <div className="flex-1 min-w-0">
+                      <input
+                        type="text"
+                        value={messageText}
+                        onChange={(e) => setMessageText(e.target.value)}
+                        placeholder="Type a message to victim..."
+                        className="w-full px-3 py-2 md:px-4 md:py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all text-gray-700 placeholder-gray-400"
+                        onKeyPress={(e) => e.key === 'Enter' && !updating && sendMessage(selected.id)}
+                        disabled={updating}
+                      />
+                    </div>
                     <button
                       onClick={() => sendMessage(selected.id)}
                       disabled={updating || !messageText.trim()}
-                      className="px-6 py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-4 py-2 md:px-6 md:py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                       {updating ? '...' : 'Send'}
                     </button>
