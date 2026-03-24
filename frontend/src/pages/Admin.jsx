@@ -80,7 +80,7 @@ export default function Admin() {
       }
 
       // Get admin API key - using hardcoded values
-      const apiUrl = 'http://localhost:5000'
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://safeweb-api.onrender.com'
       // Hardcoded admin key - matches backend/.env ADMIN_API_KEY
       const adminKey = '2bb6c18b1c30d2eaf9a7cde784af6649edab1e54fcc56a6e823b12b949d7f806'
 

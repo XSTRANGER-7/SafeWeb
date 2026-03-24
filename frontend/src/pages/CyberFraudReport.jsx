@@ -1536,7 +1536,7 @@ export default function CyberFraudReport({ user: userProp }) {
       
       // Process files and store them in subcollection (to avoid document size limit)
       if (uploadFiles.length > 0) {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+        const apiUrl = import.meta.env.VITE_API_URL || 'https://safeweb-api.onrender.com';
         const evidenceCollection = collection(db, 'cases', caseRef.id, 'evidence');
         
         for (let f of uploadFiles) {

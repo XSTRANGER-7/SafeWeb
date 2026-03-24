@@ -36,7 +36,7 @@ export default function AadhaarAuth({ onSuccess }) {
       // Send the generated OTP to backend so it can be logged to the server terminal
       // Backend endpoint should accept this POST and log it (for testing/debugging only)
       // Directly target backend on localhost during development
-      const API_BASE = 'http://localhost:5000'
+      const API_BASE = import.meta.env.VITE_API_URL || 'https://safeweb-api.onrender.com'
       const res = await fetch(`${API_BASE}/api/debug/otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -67,7 +67,7 @@ export default function AadhaarAuth({ onSuccess }) {
 
     try {
       // Call backend verify endpoint
-      const API_BASE = 'http://localhost:5000'
+      const API_BASE = import.meta.env.VITE_API_URL || 'https://safeweb-api.onrender.com'
       const res = await fetch(`${API_BASE}/api/debug/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

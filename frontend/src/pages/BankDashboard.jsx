@@ -436,7 +436,7 @@ export default function BankDashboard() {
       // Try to call backend API (optional - if it fails, we'll still update Firestore)
       let apiResponse = null;
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+        const apiUrl = import.meta.env.VITE_API_URL || 'https://safeweb-api.onrender.com';
         const adminKey = prompt("Admin key to call backend mock (optional - leave empty to skip):");
         
         if (adminKey) {
