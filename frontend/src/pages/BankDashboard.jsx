@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, getDoc, getDocs } from "firebase/firestore";
 import { db } from "../../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { notifyVictimBankUpdate } from "../utils/notifications.js";
 import { useI18n } from "../../i18n/index.jsx";
 
@@ -157,8 +157,50 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
   );
 }
 
+function matchesCaseIdentifier(caseItem, focusedCaseId) {
+  if (!caseItem || !focusedCaseId) return false;
+  return caseItem.caseId === focusedCaseId || caseItem.id === focusedCaseId;
+}
+
+function hasTrackingEvent(caseItem, eventName) {
+  return Array.isArray(caseItem?.tracking) && caseItem.tracking.some((entry) => entry?.event === eventName);
+}
+
+function isBankRelevantCase(caseItem) {
+  if (!caseItem) return false;
+
+  return Boolean(
+    caseItem.forwardedToBank ||
+    caseItem.bankActionRequired ||
+    caseItem.bankInvestigationRequestedAt ||
+    caseItem.bankHandledAt ||
+    caseItem.bankInvestigationStatus ||
+    ['Funds Frozen', 'Refunded'].includes(caseItem.status) ||
+    hasTrackingEvent(caseItem, 'Bank Investigation Requested') ||
+    hasTrackingEvent(caseItem, 'Funds Frozen') ||
+    (Array.isArray(caseItem.messages) && caseItem.messages.some((entry) => entry?.from === 'bank'))
+  );
+}
+
+function getBankCasePriority(caseItem, focusedCaseId) {
+  if (matchesCaseIdentifier(caseItem, focusedCaseId)) {
+    return 3;
+  }
+  if (caseItem?.bankActionRequired || caseItem?.bankInvestigationStatus === 'Requested') {
+    return 2;
+  }
+  if (isBankRelevantCase(caseItem)) {
+    return 1;
+  }
+  return 0;
+}
+
+function createTimelineEntry(status, note, at, by) {
+  return { status, note, at, by };
+}
+
 export default function BankDashboard() {
-  const { userProfile, loading } = useAuth();
+  const { profile, loading, logout } = useAuth();
   const { locale } = useI18n();
   const [cases, setCases] = useState([]);
   const [filteredCases, setFilteredCases] = useState([]);
@@ -176,7 +218,11 @@ export default function BankDashboard() {
     sortBy: 'newest' // 'newest', 'oldest', 'updated'
   });
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const focusedCaseId = searchParams.get('caseId');
+  const bankOfficerName = profile?.name || profile?.email || 'Bank Officer';
   const formatDateTime = (value, fallback = 'Unknown') => (value ? new Date(value).toLocaleString(locale) : fallback);
+  const bankRelevantCount = cases.filter((caseItem) => isBankRelevantCase(caseItem)).length;
 
   useEffect(() => {
     const q = query(collection(db, 'cases'), orderBy('createdAt','desc'));
@@ -195,8 +241,8 @@ export default function BankDashboard() {
             `2. Find your user in the 'users' collection\n` +
             `3. Add/update the 'role' field to 'bank'\n` +
             `4. Refresh this page\n\n` +
-            `Current user: ${userProfile?.email || 'Unknown'}\n` +
-            `Current role: ${userProfile?.role || 'Not set'}`;
+            `Current user: ${profile?.email || 'Unknown'}\n` +
+            `Current role: ${profile?.role || 'Not set'}`;
           alert(errorMsg);
         } else if (error.code === 'failed-precondition') {
           const indexUrl = error.message?.match(/https:\/\/[^\s]+/)?.[0];
@@ -212,7 +258,7 @@ export default function BankDashboard() {
       }
     );
     return () => unsub();
-  }, [userProfile?.email, userProfile?.role]);
+  }, [profile?.email, profile?.role]);
 
   // Apply filters and sorting
   useEffect(() => {
@@ -233,6 +279,11 @@ export default function BankDashboard() {
     
     // Apply sorting
     filtered.sort((a, b) => {
+      const priorityDiff = getBankCasePriority(b, focusedCaseId) - getBankCasePriority(a, focusedCaseId);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+
       if (filters.sortBy === 'newest') {
         return (b.createdAt || 0) - (a.createdAt || 0);
       } else if (filters.sortBy === 'oldest') {
@@ -244,7 +295,7 @@ export default function BankDashboard() {
     });
     
     setFilteredCases(filtered);
-  }, [cases, filters]);
+  }, [cases, filters, focusedCaseId]);
 
   // Update selected case when cases update
   useEffect(() => {
@@ -255,8 +306,19 @@ export default function BankDashboard() {
     });
   }, [cases]);
 
+  useEffect(() => {
+    if (!focusedCaseId || cases.length === 0) {
+      return;
+    }
+
+    const matchedCase = cases.find((caseItem) => matchesCaseIdentifier(caseItem, focusedCaseId));
+    if (matchedCase) {
+      setSelected(matchedCase);
+    }
+  }, [cases, focusedCaseId]);
+
   // Check if user has bank role
-  if (!loading && userProfile && userProfile.role !== 'bank') {
+  if (!loading && profile && profile.role !== 'bank') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-amber-50/30 to-gray-50 flex items-center justify-center p-6">
         <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8 text-center max-w-md">
@@ -270,12 +332,12 @@ export default function BankDashboard() {
             You don't have permission to access the Bank Dashboard.
           </p>
           <div className="text-left bg-gradient-to-br from-amber-50 to-yellow-50 p-6 rounded-xl text-sm text-gray-700 mb-6 border-2 border-amber-200 shadow-sm">
-            <p className="font-bold mb-3 text-gray-800">Your current role: <span className="text-amber-700">{userProfile.role || 'Not set'}</span></p>
+            <p className="font-bold mb-3 text-gray-800">Your current role: <span className="text-amber-700">{profile.role || 'Not set'}</span></p>
             <p className="font-bold mb-3 text-gray-800">To access Bank Dashboard:</p>
             <ol className="list-decimal list-inside space-y-2 text-gray-700">
               <li>Go to Firebase Console → Firestore Database</li>
               <li>Navigate to <code className="bg-white px-2 py-1 rounded border border-amber-300 text-gray-800 font-mono text-xs">users</code> collection</li>
-              <li>Find your user document (email: {userProfile.email || 'your email'})</li>
+              <li>Find your user document (email: {profile.email || 'your email'})</li>
               <li>Add/update field: <code className="bg-white px-2 py-1 rounded border border-amber-300 text-gray-800 font-mono text-xs">role = "bank"</code></li>
               <li>Click "Update" and refresh this page</li>
             </ol>
@@ -289,6 +351,16 @@ export default function BankDashboard() {
         </div>
       </div>
     );
+  }
+
+  async function handleLogout() {
+    try {
+      await logout();
+      navigate('/login/bank', { replace: true });
+    } catch (error) {
+      console.error('Logout failed:', error);
+      alert('Failed to logout. Please try again.');
+    }
   }
 
   if (loading) {
@@ -312,6 +384,9 @@ export default function BankDashboard() {
     try {
       const docRef = doc(db, 'cases', caseDocId);
       const currentDoc = await getDoc(docRef);
+      if (!currentDoc.exists()) {
+        throw new Error('Case not found');
+      }
       const currentData = currentDoc.data();
       const currentMessages = currentData?.messages || [];
       const now = Date.now();
@@ -320,7 +395,7 @@ export default function BankDashboard() {
         from: 'bank',
         message: messageText.trim(),
         timestamp: now,
-        senderName: userProfile?.name || userProfile?.email || 'Bank Officer'
+        senderName: bankOfficerName
       };
       
       await updateDoc(docRef, {
@@ -397,22 +472,30 @@ export default function BankDashboard() {
       const currentMessages = currentData?.messages || [];
       const currentTracking = currentData?.tracking || [];
       const now = Date.now();
+      const currentTimeline = currentData?.timeline || [];
+      const freezeNote = `Funds frozen by bank. Amount: ₹${amount}`;
+      const freezeMessage = {
+        from: 'bank',
+        message: `Funds frozen successfully. Amount: ₹${amount}`,
+        timestamp: now,
+        senderName: bankOfficerName
+      };
       
       const updatedTracking = [...currentTracking, {
         event: 'Funds Frozen',
-        description: `Funds frozen by bank. Amount: ₹${amount}`,
+        description: freezeNote,
         timestamp: now,
-        by: userProfile?.name || userProfile?.email || 'Bank Officer'
+        by: bankOfficerName
       }];
       
       await updateDoc(docRef, {
         status: 'Funds Frozen',
-        messages: [...currentMessages, {
-          from: 'bank',
-          message: `Funds frozen successfully. Amount: ₹${amount}`,
-          timestamp: now,
-          senderName: userProfile?.name || userProfile?.email || 'Bank Officer'
-        }],
+        bankActionRequired: false,
+        forwardedToBank: true,
+        bankHandledAt: now,
+        bankInvestigationStatus: 'Funds Frozen',
+        timeline: [...currentTimeline, createTimelineEntry('Funds Frozen', freezeNote, now, bankOfficerName)],
+        messages: [...currentMessages, freezeMessage],
         tracking: updatedTracking,
         updatedAt: now
       });
@@ -435,13 +518,13 @@ export default function BankDashboard() {
       const updated = { 
         ...selected, 
         status: 'Funds Frozen',
+        bankActionRequired: false,
+        forwardedToBank: true,
+        bankHandledAt: now,
+        bankInvestigationStatus: 'Funds Frozen',
+        timeline: [...currentTimeline, createTimelineEntry('Funds Frozen', freezeNote, now, bankOfficerName)],
         tracking: updatedTracking,
-        messages: [...currentMessages, {
-          from: 'bank',
-          message: `Funds frozen successfully. Amount: ₹${amount}`,
-          timestamp: now,
-          senderName: userProfile?.name || userProfile?.email || 'Bank Officer'
-        }]
+        messages: [...currentMessages, freezeMessage]
       };
       setSelected(updated);
       
@@ -511,7 +594,7 @@ export default function BankDashboard() {
                 Statistics
               </button>
               <button 
-                onClick={() => navigate('/login')} 
+                onClick={handleLogout}
                 className="flex items-center justify-center gap-2 rounded-lg border-2 border-gray-300 bg-white px-4 py-2.5 font-semibold text-gray-700 shadow-sm transition-all duration-200 hover:border-gray-400 hover:bg-gray-50 hover:shadow-md"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -577,7 +660,10 @@ export default function BankDashboard() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-bold text-gray-900">All Cases</h2>
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Case Queue</h2>
+              <p className="text-xs text-gray-500">{bankRelevantCount} bank-related cases prioritized first</p>
+            </div>
               <span className="ml-auto px-3 py-1.5 bg-gradient-to-r from-amber-100 to-yellow-100 text-amber-800 rounded-lg text-sm font-bold border-2 border-amber-300 shadow-sm">
                 {filteredCases.length} / {cases.length}
               </span>
@@ -602,6 +688,11 @@ export default function BankDashboard() {
                 </div>
                 <h3 className="font-semibold text-gray-900 mb-1 text-base">{c.fraudType || 'Unknown'}</h3>
                 <p className="text-sm text-gray-600 mb-2">{c.victimName || 'Unknown Victim'}</p>
+                {c.bankActionRequired && (
+                  <p className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                    Bank action required
+                  </p>
+                )}
                 {c.transactions && c.transactions[0] && (
                   <p className="text-sm text-amber-700 mt-2 font-bold">₹{c.transactions[0].amount || 0}</p>
                 )}
@@ -1116,7 +1207,7 @@ export default function BankDashboard() {
                   </div>
                   <button
                     onClick={() => initiateFreeze(selected)}
-                    disabled={processing || selected.status === 'Funds Frozen'}
+                    disabled={processing || selected.status === 'Funds Frozen' || selected.status === 'Refunded' || selected.status === 'Closed'}
                     className="w-full px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {processing ? (
@@ -1129,6 +1220,10 @@ export default function BankDashboard() {
                       </span>
                     ) : selected.status === 'Funds Frozen' ? (
                       'Already Frozen'
+                    ) : selected.status === 'Refunded' ? (
+                      'Already Refunded'
+                    ) : selected.status === 'Closed' ? (
+                      'Case Closed'
                     ) : (
                       <span className="flex items-center justify-center gap-2">
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

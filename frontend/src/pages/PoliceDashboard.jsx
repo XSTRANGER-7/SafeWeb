@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { collection, query, onSnapshot, orderBy, doc, updateDoc, getDoc, getDocs } from "firebase/firestore";
 import { db } from "../../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { notifyVictimPoliceUpdate, createNotificationForRole } from "../utils/notifications.js";
 import { useI18n } from "../../i18n/index.jsx";
 
@@ -161,8 +161,17 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
   );
 }
 
+function matchesCaseIdentifier(caseItem, focusedCaseId) {
+  if (!caseItem || !focusedCaseId) return false;
+  return caseItem.caseId === focusedCaseId || caseItem.id === focusedCaseId;
+}
+
+function createTimelineEntry(status, note, at, by) {
+  return { status, note, at, by };
+}
+
 export default function PoliceDashboard() {
-  const { userProfile, loading } = useAuth();
+  const { profile, loading, logout } = useAuth();
   const { locale } = useI18n();
   const [cases, setCases] = useState([]);
   const [filteredCases, setFilteredCases] = useState([]);
@@ -186,6 +195,9 @@ export default function PoliceDashboard() {
     sortBy: 'newest' // 'newest', 'oldest', 'updated'
   });
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const focusedCaseId = searchParams.get('caseId');
+  const officerName = profile?.name || profile?.email || 'Police Officer';
   const formatDateTime = (value, fallback = 'Unknown') => (value ? new Date(value).toLocaleString(locale) : fallback);
 
   useEffect(() => {
@@ -238,6 +250,15 @@ export default function PoliceDashboard() {
     
     // Apply sorting
     filtered.sort((a, b) => {
+      const aFocused = matchesCaseIdentifier(a, focusedCaseId);
+      const bFocused = matchesCaseIdentifier(b, focusedCaseId);
+      if (aFocused && !bFocused) {
+        return -1;
+      }
+      if (!aFocused && bFocused) {
+        return 1;
+      }
+
       if (filters.sortBy === 'newest') {
         return (b.createdAt || 0) - (a.createdAt || 0);
       } else if (filters.sortBy === 'oldest') {
@@ -249,7 +270,7 @@ export default function PoliceDashboard() {
     });
     
     setFilteredCases(filtered);
-  }, [cases, filters]);
+  }, [cases, filters, focusedCaseId]);
 
   // Update selected case when cases update
   useEffect(() => {
@@ -259,6 +280,17 @@ export default function PoliceDashboard() {
       return updated || currentSelected;
     });
   }, [cases]);
+
+  useEffect(() => {
+    if (!focusedCaseId || cases.length === 0) {
+      return;
+    }
+
+    const matchedCase = cases.find((caseItem) => matchesCaseIdentifier(caseItem, focusedCaseId));
+    if (matchedCase) {
+      setSelected(matchedCase);
+    }
+  }, [cases, focusedCaseId]);
 
   // Auto-hide messages
   useEffect(() => {
@@ -276,7 +308,7 @@ export default function PoliceDashboard() {
   }, [errorMsg]);
 
   // Check if user has police role
-  if (!loading && userProfile && userProfile.role !== 'police') {
+  if (!loading && profile && profile.role !== 'police') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 p-6">
         <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-8 text-center max-w-md w-full">
@@ -290,12 +322,12 @@ export default function PoliceDashboard() {
             You don't have permission to access the Police Dashboard.
           </p>
           <div className="text-left bg-amber-50 p-5 rounded-xl text-sm text-gray-700 mb-6 border border-amber-200">
-            <p className="font-semibold mb-3">Your current role: <span className="text-amber-700 font-bold">{userProfile.role || 'Not set'}</span></p>
+            <p className="font-semibold mb-3">Your current role: <span className="text-amber-700 font-bold">{profile.role || 'Not set'}</span></p>
             <p className="font-semibold mb-2">To access Police Dashboard:</p>
             <ol className="list-decimal list-inside space-y-2 text-gray-600">
               <li>Go to Firebase Console → Firestore Database</li>
               <li>Navigate to <code className="bg-amber-100 px-2 py-0.5 rounded border border-amber-300 text-gray-800 font-mono text-xs">users</code> collection</li>
-              <li>Find your user document (email: {userProfile.email || 'your email'})</li>
+              <li>Find your user document (email: {profile.email || 'your email'})</li>
               <li>Add/update field: <code className="bg-amber-100 px-2 py-0.5 rounded border border-amber-300 text-gray-800 font-mono text-xs">role = "police"</code></li>
               <li>Click "Update" and refresh this page</li>
             </ol>
@@ -309,6 +341,16 @@ export default function PoliceDashboard() {
         </div>
       </div>
     );
+  }
+
+  async function handleLogout() {
+    try {
+      await logout();
+      navigate('/login/police', { replace: true });
+    } catch (error) {
+      console.error('Logout failed:', error);
+      setErrorMsg('Failed to logout. Please try again.');
+    }
   }
 
   if (loading) {
@@ -341,7 +383,7 @@ export default function PoliceDashboard() {
           event: 'Case Viewed',
           description: 'Police officer reviewed the case',
           timestamp: now,
-          by: userProfile?.name || userProfile?.email || 'Police Officer'
+          by: officerName
         }],
         updatedAt: now
       });
@@ -365,7 +407,7 @@ export default function PoliceDashboard() {
         event: 'Case Viewed',
         description: 'Police officer reviewed the case',
         timestamp: now,
-        by: userProfile?.name || userProfile?.email || 'Police Officer'
+        by: officerName
       }] };
       setSelected(updated);
     } catch (err) {
@@ -407,13 +449,9 @@ export default function PoliceDashboard() {
           event: 'FIR Filed',
           description: `FIR filed with number: ${firNumber.trim()}`,
           timestamp: now,
-          by: userProfile?.name || userProfile?.email || 'Police Officer'
+          by: officerName
         }],
-        timeline: [...currentTimeline, {
-          status: 'In Process',
-          note: `FIR filed: ${firNumber.trim()}`,
-          at: now
-        }],
+        timeline: [...currentTimeline, createTimelineEntry('In Process', `FIR filed: ${firNumber.trim()}`, now, officerName)],
         updatedAt: now
       });
       
@@ -440,7 +478,7 @@ export default function PoliceDashboard() {
         event: 'FIR Filed',
         description: `FIR filed with number: ${firNumber.trim()}`,
         timestamp: now,
-        by: userProfile?.name || userProfile?.email || 'Police Officer'
+        by: officerName
       }];
       const updated = { 
         ...selected, 
@@ -484,7 +522,7 @@ export default function PoliceDashboard() {
         from: 'police',
         message: messageText.trim(),
         timestamp: now,
-        senderName: userProfile?.name || userProfile?.email || 'Police Officer'
+        senderName: officerName
       };
       
       await updateDoc(docRef, {
@@ -546,7 +584,7 @@ export default function PoliceDashboard() {
           event: 'Case Note Added',
           description: caseNote.trim(),
           timestamp: now,
-          by: userProfile?.name || userProfile?.email || 'Police Officer'
+          by: officerName
         }],
         updatedAt: now
       });
@@ -573,7 +611,7 @@ export default function PoliceDashboard() {
         event: 'Case Note Added',
         description: caseNote.trim(),
         timestamp: now,
-        by: userProfile?.name || userProfile?.email || 'Police Officer'
+        by: officerName
       }] };
       setSelected(updated);
     } catch (err) {
@@ -601,18 +639,28 @@ export default function PoliceDashboard() {
       const currentTimeline = currentData?.timeline || [];
       const currentTracking = currentData?.tracking || [];
       const now = Date.now();
-      
-      await updateDoc(docRef, {
+
+      const nextTimeline = [...currentTimeline, createTimelineEntry(status, note, now, officerName)];
+      const nextTracking = [...currentTracking, {
+        event: 'Status Updated',
+        description: `Status changed to: ${status}${note ? ` - ${note}` : ''}`,
+        timestamp: now,
+        by: officerName
+      }];
+      const updatePayload = {
         status,
         updatedAt: now,
-        timeline: [...currentTimeline, { status, note, at: now }],
-        tracking: [...currentTracking, {
-          event: 'Status Updated',
-          description: `Status changed to: ${status}${note ? ` - ${note}` : ''}`,
-          timestamp: now,
-          by: userProfile?.name || userProfile?.email || 'Police Officer'
-        }]
-      });
+        timeline: nextTimeline,
+        tracking: nextTracking
+      };
+
+      if (['Closed', 'Refunded'].includes(status)) {
+        updatePayload.bankActionRequired = false;
+        updatePayload.bankInvestigationStatus = status;
+        updatePayload.bankHandledAt = now;
+      }
+
+      await updateDoc(docRef, updatePayload);
       
       // Notify victim about status update
       if (currentData.victimUid) {
@@ -629,7 +677,7 @@ export default function PoliceDashboard() {
       }
       
       setSuccessMsg(`Case status updated to: ${status}`);
-      const updated = { ...selected, status };
+      const updated = { ...selected, ...updatePayload };
       setSelected(updated);
     } catch (err) {
       console.error('Error updating status:', err);
@@ -653,26 +701,41 @@ export default function PoliceDashboard() {
         throw new Error('Case not found');
       }
       const currentData = currentDoc.data();
+      if (currentData.bankActionRequired && currentData.bankInvestigationStatus === 'Requested') {
+        setSuccessMsg('Bank investigation is already pending for this case');
+        return;
+      }
+
+      const currentTimeline = currentData?.timeline || [];
       const currentTracking = currentData?.tracking || [];
       const currentMessages = currentData?.messages || [];
       const now = Date.now();
-      
-      await updateDoc(docRef, {
+
+      const requestNote = 'Bank investigation requested. Please investigate the transaction and freeze funds as per RBI/NPCI guidelines.';
+      const updatePayload = {
         status: 'In Process',
+        bankActionRequired: true,
+        forwardedToBank: true,
+        bankInvestigationRequestedAt: now,
+        bankInvestigationRequestedBy: officerName,
+        bankInvestigationStatus: 'Requested',
+        timeline: [...currentTimeline, createTimelineEntry('In Process', requestNote, now, officerName)],
         tracking: [...currentTracking, {
           event: 'Bank Investigation Requested',
           description: 'Police requested bank to investigate transaction and freeze funds (RBI/NPCI compliant)',
           timestamp: now,
-          by: userProfile?.name || userProfile?.email || 'Police Officer'
+          by: officerName
         }],
         messages: [...currentMessages, {
           from: 'police',
-          message: 'Bank investigation requested. Please investigate the transaction and freeze funds as per RBI/NPCI guidelines.',
+          message: requestNote,
           timestamp: now,
-          senderName: userProfile?.name || userProfile?.email || 'Police Officer'
+          senderName: officerName
         }],
         updatedAt: now
-      });
+      };
+
+      await updateDoc(docRef, updatePayload);
       
       // Notify victim about bank investigation request
       if (currentData.victimUid) {
@@ -702,7 +765,7 @@ export default function PoliceDashboard() {
       }
       
       setSuccessMsg('Bank investigation requested successfully');
-      const updated = { ...selected, status: 'In Process' };
+      const updated = { ...selected, ...updatePayload };
       setSelected(updated);
     } catch (err) {
       console.error('Error requesting bank investigation:', err);
@@ -756,7 +819,7 @@ export default function PoliceDashboard() {
                 Statistics
               </button>
               <button 
-                onClick={() => navigate('/login')} 
+                onClick={handleLogout}
                 className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-2.5 font-semibold text-white shadow-md transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-lg"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1515,10 +1578,10 @@ export default function PoliceDashboard() {
                     </button>
                     <button
                       onClick={() => requestBankInvestigation(selected.id)}
-                      disabled={updating || selected.status === 'Funds Frozen'}
+                      disabled={updating || selected.bankActionRequired || selected.status === 'Funds Frozen' || selected.status === 'Refunded' || selected.status === 'Closed'}
                       className="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                     >
-                      🏦 Request Bank Investigation
+                      {selected.bankActionRequired ? '🔄 Bank Request Pending' : '🏦 Request Bank Investigation'}
                     </button>
                     <button
                       onClick={() => setShowNoteModal(true)}
