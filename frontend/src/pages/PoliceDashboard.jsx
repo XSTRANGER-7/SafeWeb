@@ -205,7 +205,7 @@ export default function PoliceDashboard() {
     const unsub = onSnapshot(q, 
       (snap) => {
         const arr = []; 
-        snap.forEach(d => arr.push({ id: d.id, ...d.data() })); 
+        snap.forEach(d => arr.push({ ...d.data(), id: d.id })); 
         setCases(arr);
       },
       (error) => {

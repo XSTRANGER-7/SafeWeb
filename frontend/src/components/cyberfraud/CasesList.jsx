@@ -95,7 +95,7 @@ export default function CasesList({ user, profile, onSwitchToFile }) {
       casesQuery,
       (snapshot) => {
         const nextCases = [];
-        snapshot.forEach((doc) => nextCases.push({ id: doc.id, ...doc.data() }));
+        snapshot.forEach((doc) => nextCases.push({ ...doc.data(), id: doc.id }));
         nextCases.sort((first, second) => (second.createdAt || 0) - (first.createdAt || 0));
         setCases(nextCases);
         setLoading(false);

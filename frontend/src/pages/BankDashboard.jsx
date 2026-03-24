@@ -229,7 +229,7 @@ export default function BankDashboard() {
     const unsub = onSnapshot(q, 
       (snap) => {
         const arr = []; 
-        snap.forEach(d => arr.push({ id: d.id, ...d.data() })); 
+        snap.forEach(d => arr.push({ ...d.data(), id: d.id })); 
         setCases(arr);
       },
       (error) => {
@@ -243,7 +243,6 @@ export default function BankDashboard() {
             `4. Refresh this page\n\n` +
             `Current user: ${profile?.email || 'Unknown'}\n` +
             `Current role: ${profile?.role || 'Not set'}`;
-          alert(errorMsg);
         } else if (error.code === 'failed-precondition') {
           const indexUrl = error.message?.match(/https:\/\/[^\s]+/)?.[0];
           if (indexUrl) {

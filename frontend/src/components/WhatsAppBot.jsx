@@ -1,5 +1,7 @@
-import React from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useI18n } from '../../i18n/index.jsx'
+import { chatbotLogic } from '../utils/ChatbotLogic.jsx'
 
 function WhatsAppIcon({ className = 'h-6 w-6' }) {
   return (
@@ -12,27 +14,186 @@ function WhatsAppIcon({ className = 'h-6 w-6' }) {
 
 export default function WhatsAppBot() {
   const { t } = useI18n()
+  const navigate = useNavigate()
+  const [isOpen, setIsOpen] = useState(false)
+  const [messages, setMessages] = useState([{ from: "bot", text: "Hi! I’m OP Bot 👮‍♂️. How can I help you today?" }])
+  const [input, setInput] = useState("")
+  const messagesEndRef = useRef(null)
 
-  // Note: we can put a placeholder phone number like 919999999999 or leave it to rely on user changing it.
-  // Using a generic Odisha Police placeholder number, modify as needed.
   const botPhoneNumber = '919999999999';
-  const whatsAppLaunchUrl = `https://api.whatsapp.com/send?phone=${botPhoneNumber}&text=${encodeURIComponent(t('whatsappBot.prefill') || 'Hello, I need help with an online safety service.')}`
+  const whatsAppLaunchUrl = `https://api.whatsapp.com/send?phone=${botPhoneNumber}&text=${encodeURIComponent(t('whatsappBot.prefill') || 'Hi, I need help from the Odisha Police Official WhatsApp Bot.')}`
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  useEffect(() => {
+    if (isOpen) {
+      scrollToBottom()
+    }
+  }, [messages, isOpen])
+
+  const sendMessage = () => {
+    if (!input.trim()) return;
+    const newMessages = [...messages, { from: "user", text: input }];
+    const reply = chatbotLogic(input);
+    setMessages([...newMessages, { from: "bot", text: reply }]);
+    setInput("");
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      sendMessage();
+    }
+  }
 
   return (
-    <a
-      href={whatsAppLaunchUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="fixed bottom-5 right-5 z-50 inline-flex items-center gap-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-3 text-sm font-semibold text-white shadow-2xl transition-all duration-200 hover:scale-[1.02] hover:from-emerald-600 hover:to-green-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 sm:bottom-6 sm:right-6"
-      aria-label={t('whatsappBot.button') || 'WhatsApp Bot'}
-    >
-      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/14">
-        <WhatsAppIcon className="h-7 w-7" />
-      </span>
-      <span className="hidden pr-2 text-left sm:block">
-        <span className="block text-sm font-semibold">{t('whatsappBot.button') || 'WhatsApp Bot'}</span>
-        <span className="block text-xs font-medium text-white/85">{t('whatsappBot.online') || 'Online now'}</span>
-      </span>
-    </a>
+    <>
+      {/* Floating Chat Button */}
+      {!isOpen && (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="fixed bottom-6 right-6 z-50 inline-flex items-center gap-3 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-2xl transition-all duration-300 hover:scale-105 hover:shadow-blue-500/50 focus:outline-none focus:ring-4 focus:ring-blue-300 group"
+          aria-label="Open Chatbot"
+        >
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/20 group-hover:bg-white/30 transition-colors">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+          </span>
+          <span className="hidden pr-2 text-left sm:block">
+            <span className="block text-sm font-bold">Live Support Chat</span>
+            <span className="block text-xs font-medium text-blue-100">Help & WhatsApp</span>
+          </span>
+        </button>
+      )}
+
+      {/* Chat Window */}
+      {isOpen && (
+        <div className="fixed bottom-6 right-6 z-50 flex flex-col w-[min(24rem,calc(100vw-2rem))] h-[550px] max-h-[80vh] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden transform transition-all duration-300 ease-out origin-bottom-right">
+          
+          {/* Header */}
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-4 flex items-center justify-between shadow-md z-10 relative">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center shadow-inner">
+                <span className="text-xl">👮‍♂️</span>
+              </div>
+              <div>
+                <h3 className="font-bold text-lg leading-tight">OP Bot Support</h3>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                  <span className="text-xs text-blue-100 font-medium">Online (Web Bot)</span>
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsOpen(false)}
+              className="p-2 hover:bg-white/20 rounded-full transition-colors focus:outline-none"
+              aria-label="Close chat"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* WhatsApp Redirect Banner */}
+          <div className="bg-gradient-to-r from-emerald-50 to-green-50 border-b border-emerald-100 p-3">
+            <a
+              href={whatsAppLaunchUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between w-full bg-white border border-emerald-200 rounded-xl p-2.5 transition-all duration-200 hover:shadow-md hover:border-emerald-400 hover:bg-emerald-50/50 group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex bg-gradient-to-br from-emerald-400 to-green-600 p-1.5 rounded-lg shadow-sm">
+                  <WhatsAppIcon className="w-5 h-5 text-white" />
+                </div>
+                <div className="text-left">
+                  <p className="text-xs font-bold text-gray-900 group-hover:text-emerald-700 transition-colors">Official WhatsApp Bot</p>
+                  <p className="text-[10px] text-gray-500 font-medium">Get verified updates directly</p>
+                </div>
+              </div>
+              <div className="bg-emerald-100 p-1.5 rounded-full text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </a>
+          </div>
+
+          {/* Messages Area */}
+          <div className="flex-1 overflow-y-auto p-4 bg-gray-50/50 space-y-4">
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.from === "bot" ? "justify-start" : "justify-end"}`}>
+                <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 shadow-sm text-[15px] leading-relaxed ${
+                  m.from === "bot" 
+                    ? "bg-white border border-gray-200 text-gray-800 rounded-tl-sm" 
+                    : "bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-tr-sm"
+                }`}>
+                  {m.text}
+                </div>
+              </div>
+            ))}
+            
+            {/* Quick Actions (only show if last message is from bot and user hasn't typed much) */}
+            {messages.length < 5 && messages[messages.length - 1].from === 'bot' && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {[
+                  { label: '🛡️ Report Cyber Fraud', path: '/cyber-fraud-report' },
+                  { label: '🔍 Detect Phishing', path: '/phishing-detection' },
+                  { label: '👩‍🦰 Women Safety', path: '/women-safety' },
+                  { label: '📋 My Dashboard', path: '/dashboard' }
+                ].map((action, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setMessages(prev => [...prev, { from: 'user', text: action.label }]);
+                      setTimeout(() => {
+                        setMessages(prev => [...prev, { from: 'bot', text: `Taking you to ${action.label}...` }]);
+                        setTimeout(() => {
+                          setIsOpen(false);
+                          navigate(action.path);
+                        }, 1000);
+                      }, 500);
+                    }}
+                    className="text-xs font-semibold bg-white border border-blue-200 text-blue-700 px-3 py-1.5 rounded-full hover:bg-blue-50 hover:border-blue-300 transition-colors shadow-sm"
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Area */}
+          <div className="p-3 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.02)]">
+            <div className="flex items-center gap-2 bg-gray-50 rounded-xl border border-gray-200 p-1.5 focus-within:ring-2 focus-within:ring-blue-200 focus-within:border-blue-400 transition-all">
+              <input
+                type="text"
+                className="flex-1 bg-transparent px-3 py-2 text-sm focus:outline-none text-gray-700 placeholder-gray-400"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Ask OP Web Bot..."
+              />
+              <button 
+                onClick={sendMessage}
+                disabled={!input.trim()}
+                className="bg-blue-600 text-white p-2 rounded-lg transition-transform duration-200 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95"
+                aria-label="Send message"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ transform: 'translateX(1px)' }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-center text-[10px] text-gray-400 mt-2 font-medium">SafeWeb Automated Support • Chat history is not saved</p>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
