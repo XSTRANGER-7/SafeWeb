@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion as Motion } from 'framer-motion'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://safeweb-phishing-api.onrender.com'
 
 export default function PhishingDetection() {
   const [url, setUrl] = useState('')
