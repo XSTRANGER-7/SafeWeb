@@ -38,9 +38,9 @@ Wait about 2-3 minutes. Once the logs say `Backend running on 5000` (or similar)
 ---
 
 ## 🟣 Part 2: Deploying the Python ML Backend (Phishing API)
-This is the `phishing_backend/` folder running FastAPI with `scikit-learn`.
+This is the `phishing_backend/` folder running FastAPI with `scikit-learn` in `backend_api/main.py`.
 
-Render natively supports deploying from Dockerfiles, which is perfect for heavy Python dependencies.
+We will deploy this using Docker because Render natively supports Dockerfiles, which completely solves any heavy ML library dependency issues.
 
 1. Go back to the Render dashboard, click **New +**, and select **Web Service**.
 2. Select **"Build and deploy from a Git repository"** and connect the same **SafeWeb** repository.
@@ -49,15 +49,16 @@ Render natively supports deploying from Dockerfiles, which is perfect for heavy 
    * **Region:** Same region as above
    * **Branch:** `main`
    * **Root Directory:** `phishing_backend` *(⚠️ CRITICAL!)*
-   * **Runtime:** `Docker` *(⚠️ NOT Python! Render will build from your Dockerfile)*
-   * **Build Command:** *(Leave blank, Render uses the Dockerfile)*
-   * **Start Command:** *(Leave blank, Render uses the CMD in the Dockerfile)*
+   * **Runtime:** `Docker` 
+   * **Dockerfile Path:** `backend_api/Dockerfile` *(Scroll down to "Advanced" or Build Settings to specify this!)*
+   * **Build Command:** *(Leave blank, Docker runs the installation)*
+   * **Start Command:** *(Leave blank, Docker runs the CMD)*
 4. Select the **Free** instance type.
 5. **Environment Variables:**
-   Expand "Advanced". Add any variables you need. (Like your MongoDB URI or specific API keys from `phishing_backend/.env`).
+   Expand "Advanced" and add any variables you need from `phishing_backend/.env`.
 6. Click **Create Web Service**.
 
-Render will now build your Python Docker image. This might take **5-8 minutes** because it has to install Heavy ML libraries (`scikit-learn`, `numpy`). Once it says "Build successful" and starts the service, copy the new public URL (like `https://safeweb-phishing-api.onrender.com`).
+Render will now read the Dockerfile, download your code, install heavy ML libraries inside an isolated container, and start the `main.py` API! Once it says "Your service is live", copy the new public URL (like `https://safeweb-phishing-api.onrender.com`).
 
 ---
 
