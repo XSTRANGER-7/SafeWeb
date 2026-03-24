@@ -30,18 +30,18 @@ export default function FeatureCards() {
   ]
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-5 sm:gap-6 md:grid-cols-3">
       {features.map((feature, index) => (
         <Link
           key={index}
           to={feature.link}
-          className="rounded-xl border border-gray-200 bg-white p-5 shadow-md transition-all duration-200 hover:scale-[1.02] hover:shadow-lg sm:p-6"
+          className="rounded-[1.25rem] border border-gray-200 bg-white p-5 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.1)] sm:p-6"
         >
-          <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br text-2xl shadow-md sm:h-14 sm:w-14 sm:text-3xl ${feature.color}`}>
+          <div className={`mb-4 flex h-12 w-12 sm:h-14 sm:w-14 items-center justify-center rounded-2xl bg-gradient-to-br text-2xl shadow-md sm:text-3xl ${feature.color}`}>
             {feature.icon}
           </div>
-          <h3 className="mb-2 text-lg font-bold text-gray-900 sm:text-xl">{feature.title}</h3>
-          <p className="text-gray-600 text-sm">{feature.description}</p>
+          <h3 className="mb-2 text-lg font-bold text-gray-900 sm:text-xl tracking-tight">{feature.title}</h3>
+          <p className="text-sm font-medium leading-relaxed text-gray-500">{feature.description}</p>
         </Link>
       ))}
     </div>
