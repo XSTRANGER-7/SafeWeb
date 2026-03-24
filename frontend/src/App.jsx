@@ -10,6 +10,7 @@ import Analytics from './pages/Analytics'
 import Docs from './pages/Docs'
 import Login from './auth/Login'
 import PBLogin from './auth/P-B-Login'
+import SetupAccounts from './pages/SetupAccounts'
 import Dashboard from './pages/Dashboard'
 import PhishingDetection from './pages/PhishingDetection'
 import WomenSafety from './pages/WomenSafety'
@@ -33,6 +34,7 @@ export default function App() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/docs" element={<Docs />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/setup-accounts" element={<SetupAccounts />} />
             <Route path="/login/police" element={<PBLogin />} />
             <Route path="/login/bank" element={<PBLogin />} />
             <Route path="/admin" element={<Admin />} />

@@ -20,6 +20,13 @@ export default function PBLogin() {
   
   const role = getRoleFromPath(location.pathname)
 
+  // Clear inputs and error when route changes (e.g. from police to bank login)
+  useEffect(() => {
+    setEmail('')
+    setPassword('')
+    setError(null)
+  }, [location.pathname])
+
   // Handle login form submission
   async function handleLogin(e) {
     e.preventDefault()
