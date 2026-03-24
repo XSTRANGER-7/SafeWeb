@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, ComposedChart } from 'recharts';
+import { useI18n } from '../../i18n';
 
 const COLORS = {
   pending: '#f59e0b',
@@ -303,6 +304,7 @@ function OdishaHeatmap({ cases }) {
 
 export default function StatisticsPage() {
   const navigate = useNavigate();
+  const { formatCurrency } = useI18n();
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
@@ -548,7 +550,7 @@ export default function StatisticsPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-gray-600 text-sm font-semibold mb-1">Total Amount</p>
-              <p className="text-3xl font-bold text-gray-900">₹{stats.totalAmount.toLocaleString('en-IN')}</p>
+              <p className="text-3xl font-bold text-gray-900">{formatCurrency(stats.totalAmount)}</p>
               <p className="text-xs text-gray-500 mt-1">Financial impact</p>
             </div>
             <div className="w-14 h-14 bg-gradient-to-br from-red-500 to-pink-500 rounded-xl flex items-center justify-center shadow-md">

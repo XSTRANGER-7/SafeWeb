@@ -2,8 +2,11 @@ import { cn } from "@/lib/utils";
 import React from "react";
 import { motion as Motion } from "framer-motion";
 import policeOfficerImage from "../assets/img.jpg";
+import { useI18n } from "../../i18n/index.jsx";
 
 export default function Hero() {
+  const { t } = useI18n();
+
   return (
     <div className="relative flex min-h-[500px] w-full items-center justify-center overflow-hidden bg-gradient-to-br from-gray-50 via-amber-50/30 to-gray-50 sm:min-h-[600px]">
       <div
@@ -70,11 +73,11 @@ export default function Hero() {
             >
               <h1 className="mb-5 text-4xl font-bold leading-tight sm:text-5xl md:text-6xl lg:text-7xl">
                 <span className="animate-gradient bg-gradient-to-r from-amber-600 via-yellow-600 to-amber-600 bg-clip-text text-transparent">
-                  Hello! I'm
+                  {t("hero.titleLead", "Hello! I'm")}
                 </span>
                 <br />
                 <span className="bg-gradient-to-r from-blue-600 to-blue-800 bg-clip-text text-transparent">
-                  Mr. OP
+                  {t("hero.titleName", "Mr. OP")}
                 </span>
               </h1>
             </Motion.div>
@@ -85,7 +88,7 @@ export default function Hero() {
               transition={{ duration: 0.6, delay: 0.6 }}
               className="mb-4 text-lg font-medium text-gray-700 sm:text-xl md:text-2xl"
             >
-              Your Virtual Assistant
+              {t("hero.subtitle", "Your Virtual Assistant")}
             </Motion.p>
 
             <Motion.div
@@ -95,7 +98,7 @@ export default function Hero() {
               className="mb-8 space-y-4"
             >
               <p className="text-base leading-relaxed text-gray-600 sm:text-lg">
-                I'm <span className="font-semibold text-amber-700">Mr. OP</span>, your virtual agent powered by <span className="font-semibold text-blue-700">Odisha Police</span>. I'm here to help you access multiple services and support systems that will assist you in times of need.
+                {t("hero.description", "I'm Mr. OP, your virtual agent powered by Odisha Police. I'm here to help you access multiple services and support systems that will assist you in times of need.")}
               </p>
             </Motion.div>
           </Motion.div>

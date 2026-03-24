@@ -15,6 +15,7 @@ import {
 } from 'recharts'
 import { db } from '../../firebase'
 import { useAuth } from '../context/AuthContext'
+import { useI18n } from '../../i18n'
 
 const STATUS_ORDER = ['Pending', 'In Process', 'Funds Frozen', 'Refunded', 'Closed']
 
@@ -66,14 +67,14 @@ function getLatestCaseTimestamp(caseItem) {
   )
 }
 
-function formatDate(value, options = { day: 'numeric', month: 'short', year: 'numeric' }) {
+function formatDate(value, locale, options = { day: 'numeric', month: 'short', year: 'numeric' }) {
   const timestamp = getTimestamp(value)
   if (!timestamp) return 'Not available'
-  return new Intl.DateTimeFormat('en-IN', options).format(new Date(timestamp))
+  return new Intl.DateTimeFormat(locale, options).format(new Date(timestamp))
 }
 
-function formatDateTime(value) {
-  return formatDate(value, {
+function formatDateTime(value, locale) {
+  return formatDate(value, locale, {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -82,8 +83,8 @@ function formatDateTime(value) {
   })
 }
 
-function formatCurrency(value) {
-  return new Intl.NumberFormat('en-IN', {
+function formatCurrency(value, locale) {
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: 0
@@ -102,6 +103,7 @@ function StatCard({ title, value, subtitle }) {
 
 export default function Dashboard() {
   const { user, profile } = useAuth()
+  const { locale, translateText: tt, formatNumber } = useI18n()
   const [searchParams] = useSearchParams()
   const [cases, setCases] = useState([])
   const [loading, setLoading] = useState(true)
@@ -146,7 +148,7 @@ export default function Dashboard() {
     return () => unsubscribe()
   }, [user?.uid])
 
-  const displayName = profile?.name || user?.displayName || 'User'
+  const displayName = profile?.name || user?.displayName || tt('User')
   const focusedCaseId = searchParams.get('caseId')
   const sortedCases = [...cases].sort((a, b) => {
     const aFocused = focusedCaseId && (a.caseId === focusedCaseId || a.id === focusedCaseId)
@@ -170,7 +172,8 @@ export default function Dashboard() {
 
   const statusData = STATUS_ORDER
     .map((status) => ({
-      name: status,
+      status,
+      name: tt(status),
       value: sortedCases.filter((caseItem) => (caseItem.status || 'Pending') === status).length,
       fill: getStatusMeta(status).color
     }))
@@ -184,7 +187,7 @@ export default function Dashboard() {
     const year = monthDate.getFullYear()
 
     return {
-      month: monthDate.toLocaleDateString('en-IN', { month: 'short' }),
+      month: monthDate.toLocaleDateString(locale, { month: 'short' }),
       submitted: sortedCases.filter((caseItem) => {
         const createdAt = new Date(getTimestamp(caseItem.createdAt))
         return createdAt.getMonth() === month && createdAt.getFullYear() === year
@@ -224,20 +227,20 @@ export default function Dashboard() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-2xl">
                 <span className="inline-flex items-center rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-white/80">
-                  Personal Dashboard
+                  {tt('Personal Dashboard')}
                 </span>
                 <h1 className="mt-4 text-3xl font-semibold leading-tight sm:text-4xl">
-                  Welcome back, {displayName}
+                  {tt(`Welcome back, ${displayName}`)}
                 </h1>
                 <p className="mt-3 max-w-xl text-sm leading-7 text-slate-200 sm:text-base">
-                  Manage your submitted applications, monitor live progress, and keep every important update in one place.
+                  {tt('Manage your submitted applications, monitor live progress, and keep every important update in one place.')}
                 </p>
               </div>
 
               <div className="rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur sm:min-w-[240px]">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/65">Today</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-white/65">{tt('Today')}</p>
                 <p className="mt-2 text-lg font-semibold text-white">
-                  {formatDate(Date.now(), {
+                  {formatDate(Date.now(), locale, {
                     weekday: 'long',
                     day: 'numeric',
                     month: 'long',
@@ -246,27 +249,27 @@ export default function Dashboard() {
                 </p>
                 <p className="mt-2 text-sm text-slate-200">
                   {activeApplications > 0
-                    ? `${activeApplications} active application${activeApplications === 1 ? '' : 's'} need monitoring`
-                    : 'Your dashboard is ready for your next complaint or status update.'}
+                    ? tt(`${activeApplications} active application${activeApplications === 1 ? '' : 's'} need monitoring`)
+                    : tt('Your dashboard is ready for your next complaint or status update.')}
                 </p>
               </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/60">Resolution Rate</p>
-                <p className="mt-3 text-3xl font-semibold">{resolutionRate}%</p>
-                <p className="mt-2 text-sm text-slate-200">Across all submitted applications</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-white/60">{tt('Resolution Rate')}</p>
+                <p className="mt-3 text-3xl font-semibold">{formatNumber(resolutionRate)}%</p>
+                <p className="mt-2 text-sm text-slate-200">{tt('Across all submitted applications')}</p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/60">Reported Amount</p>
-                <p className="mt-3 text-3xl font-semibold">{formatCurrency(totalReportedLoss)}</p>
-                <p className="mt-2 text-sm text-slate-200">Combined reported loss value</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-white/60">{tt('Reported Amount')}</p>
+                <p className="mt-3 text-3xl font-semibold">{formatCurrency(totalReportedLoss, locale)}</p>
+                <p className="mt-2 text-sm text-slate-200">{tt('Combined reported loss value')}</p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/60">Average Claim</p>
-                <p className="mt-3 text-3xl font-semibold">{formatCurrency(averageClaimValue)}</p>
-                <p className="mt-2 text-sm text-slate-200">Average amount per application</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-white/60">{tt('Average Claim')}</p>
+                <p className="mt-3 text-3xl font-semibold">{formatCurrency(averageClaimValue, locale)}</p>
+                <p className="mt-2 text-sm text-slate-200">{tt('Average amount per application')}</p>
               </div>
             </div>
 
@@ -275,13 +278,13 @@ export default function Dashboard() {
                 to="/cyber-fraud-report"
                 className="inline-flex items-center justify-center rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-50"
               >
-                File New Complaint
+                {tt('File New Complaint')}
               </Link>
               <Link
                 to="/cyber-fraud-report?view=track"
                 className="inline-flex items-center justify-center rounded-2xl border border-white/20 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
               >
-                Open Application Tracker
+                {tt('Open Application Tracker')}
               </Link>
             </div>
           </div>
@@ -290,58 +293,58 @@ export default function Dashboard() {
         <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm sm:p-7">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">Account Snapshot</p>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">{tt('Account Snapshot')}</p>
               <h2 className="mt-2 text-2xl font-semibold text-gray-900">
-                {focusedCase ? 'Focused Application' : 'Logged-in User Profile'}
+                {focusedCase ? tt('Focused Application') : tt('Logged-in User Profile')}
               </h2>
             </div>
             <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
-              {profile?.role || 'normal'}
+              {tt(profile?.role || 'normal')}
             </span>
           </div>
 
           <div className="mt-6 space-y-4">
             <div className="rounded-2xl bg-gray-50 p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-gray-500">Email</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-gray-500">{tt('Email')}</p>
               <p className="mt-2 break-all text-sm font-semibold text-gray-900">
-                {profile?.email || user?.email || 'Not available'}
+                {profile?.email || user?.email || tt('Not available')}
               </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
               <div className="rounded-2xl border border-gray-200 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-gray-500">Member Since</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-gray-500">{tt('Member Since')}</p>
                 <p className="mt-2 text-sm font-semibold text-gray-900">
-                  {profile?.createdAt ? formatDate(profile.createdAt) : 'Recently joined'}
+                  {profile?.createdAt ? tt(formatDate(profile.createdAt, locale)) : tt('Recently joined')}
                 </p>
               </div>
               <div className="rounded-2xl border border-gray-200 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-gray-500">Latest Application</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-gray-500">{tt('Latest Application')}</p>
                 <p className="mt-2 text-sm font-semibold text-gray-900">
-                  {latestCase?.caseId || 'No applications yet'}
+                  {latestCase?.caseId || tt('No applications yet')}
                 </p>
               </div>
             </div>
 
             <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-gray-50 to-white p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-gray-500">
-                {focusedCase ? 'Opened From Notification' : 'Current Focus'}
+                {focusedCase ? tt('Opened From Notification') : tt('Current Focus')}
               </p>
               <p className="mt-2 text-lg font-semibold text-gray-900">
-                {(focusedCase || latestCase)?.caseId || 'No active focus'}
+                {(focusedCase || latestCase)?.caseId || tt('No active focus')}
               </p>
               {(focusedCase || latestCase) && (
                 <span className={`mt-3 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${getStatusMeta((focusedCase || latestCase).status || 'Pending').badge}`}>
                   <span className={`h-2 w-2 rounded-full ${getStatusMeta((focusedCase || latestCase).status || 'Pending').dot}`} />
-                  {(focusedCase || latestCase).status || 'Pending'}
+                  {tt((focusedCase || latestCase).status || 'Pending')}
                 </span>
               )}
               <p className="mt-3 text-sm leading-6 text-gray-600">
                 {focusedCase
-                  ? 'This application was highlighted from a dashboard notification link.'
+                  ? tt('This application was highlighted from a dashboard notification link.')
                   : latestCase
-                    ? 'Your latest application remains pinned here for quick review.'
-                    : 'Once you file an application, its live status will appear here.'}
+                    ? tt('Your latest application remains pinned here for quick review.')
+                    : tt('Once you file an application, its live status will appear here.')}
               </p>
             </div>
           </div>
@@ -349,29 +352,29 @@ export default function Dashboard() {
       </section>
       {error && (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          {tt(error)}
         </div>
       )}
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          title="Applications Submitted"
-          value={totalApplications}
-          subtitle="All complaints linked to your account"
+          title={tt('Applications Submitted')}
+          value={formatNumber(totalApplications)}
+          subtitle={tt('All complaints linked to your account')}
         />
         <StatCard
-          title="Pending Review"
-          value={pendingApplications}
-          subtitle="New applications waiting for first action"
+          title={tt('Pending Review')}
+          value={formatNumber(pendingApplications)}
+          subtitle={tt('New applications waiting for first action')}
         />
         <StatCard
-          title="Active Cases"
-          value={activeApplications}
-          subtitle="Applications currently under active processing"
+          title={tt('Active Cases')}
+          value={formatNumber(activeApplications)}
+          subtitle={tt('Applications currently under active processing')}
         />
         <StatCard
-          title="Resolved"
-          value={resolvedApplications}
-          subtitle="Applications marked refunded or closed"
+          title={tt('Resolved')}
+          value={formatNumber(resolvedApplications)}
+          subtitle={tt('Applications marked refunded or closed')}
         />
       </section>
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)]">
@@ -379,20 +382,20 @@ export default function Dashboard() {
           <div className="rounded-[28px] border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">Analytics</p>
-                <h2 className="mt-2 text-2xl font-semibold text-gray-900">Application Performance</h2>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">{tt('Analytics')}</p>
+                <h2 className="mt-2 text-2xl font-semibold text-gray-900">{tt('Application Performance')}</h2>
               </div>
-              <p className="text-sm text-gray-500">Live view of your submitted applications and outcomes</p>
+              <p className="text-sm text-gray-500">{tt('Live view of your submitted applications and outcomes')}</p>
             </div>
 
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
               <div className="rounded-3xl border border-gray-200 p-4 sm:p-5">
-                <h3 className="text-lg font-semibold text-gray-900">Submission Trend</h3>
-                <p className="mt-1 text-sm text-gray-500">Submitted vs resolved applications over the last 6 months</p>
+                <h3 className="text-lg font-semibold text-gray-900">{tt('Submission Trend')}</h3>
+                <p className="mt-1 text-sm text-gray-500">{tt('Submitted vs resolved applications over the last 6 months')}</p>
                 <div className="mt-5">
                   {totalApplications === 0 ? (
                     <div className="flex h-[280px] items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-gray-50/80 px-6 text-center text-sm text-gray-500">
-                      File your first application to unlock trend analytics.
+                      {tt('File your first application to unlock trend analytics.')}
                     </div>
                   ) : (
                     <div className="h-[280px]">
@@ -412,8 +415,8 @@ export default function Dashboard() {
                           <XAxis dataKey="month" tickLine={false} axisLine={false} />
                           <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={30} />
                           <Tooltip />
-                          <Area type="monotone" dataKey="submitted" stroke="#f59e0b" fill="url(#dashSubmitted)" strokeWidth={3} />
-                          <Area type="monotone" dataKey="resolved" stroke="#10b981" fill="url(#dashResolved)" strokeWidth={3} />
+                          <Area type="monotone" dataKey="submitted" name={tt('Submitted')} stroke="#f59e0b" fill="url(#dashSubmitted)" strokeWidth={3} />
+                          <Area type="monotone" dataKey="resolved" name={tt('Resolved')} stroke="#10b981" fill="url(#dashResolved)" strokeWidth={3} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
@@ -422,12 +425,12 @@ export default function Dashboard() {
               </div>
 
               <div className="rounded-3xl border border-gray-200 p-4 sm:p-5">
-                <h3 className="text-lg font-semibold text-gray-900">Status Mix</h3>
-                <p className="mt-1 text-sm text-gray-500">How your applications are distributed by current status</p>
+                <h3 className="text-lg font-semibold text-gray-900">{tt('Status Mix')}</h3>
+                <p className="mt-1 text-sm text-gray-500">{tt('How your applications are distributed by current status')}</p>
                 <div className="mt-5">
                   {statusData.length === 0 ? (
                     <div className="flex h-[280px] items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-gray-50/80 px-6 text-center text-sm text-gray-500">
-                      Status insights will appear after your first complaint.
+                      {tt('Status insights will appear after your first complaint.')}
                     </div>
                   ) : (
                     <>
@@ -445,12 +448,12 @@ export default function Dashboard() {
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2">
                         {statusData.map((item) => (
-                          <div key={item.name} className="flex items-center justify-between rounded-2xl bg-gray-50 px-4 py-3">
+                          <div key={item.status} className="flex items-center justify-between rounded-2xl bg-gray-50 px-4 py-3">
                             <div className="flex items-center gap-3">
                               <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.fill }} />
                               <span className="text-sm font-medium text-gray-700">{item.name}</span>
                             </div>
-                            <span className="text-sm font-semibold text-gray-900">{item.value}</span>
+                            <span className="text-sm font-semibold text-gray-900">{formatNumber(item.value)}</span>
                           </div>
                         ))}
                       </div>
@@ -465,15 +468,15 @@ export default function Dashboard() {
             <div className="border-b border-gray-200 px-5 py-5 sm:px-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">Status Tracker</p>
-                  <h2 className="mt-2 text-2xl font-semibold text-gray-900">All Application Status</h2>
-                  <p className="mt-1 text-sm text-gray-500">Review every complaint, current stage, and the latest operational note.</p>
+                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">{tt('Status Tracker')}</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-gray-900">{tt('All Application Status')}</h2>
+                  <p className="mt-1 text-sm text-gray-500">{tt('Review every complaint, current stage, and the latest operational note.')}</p>
                 </div>
                 <Link
                   to="/cyber-fraud-report?view=track"
                   className="inline-flex items-center justify-center rounded-2xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:border-amber-200 hover:bg-amber-50 hover:text-amber-700"
                 >
-                  Open Detailed Tracker
+                  {tt('Open Detailed Tracker')}
                 </Link>
               </div>
             </div>
@@ -483,20 +486,20 @@ export default function Dashboard() {
                 <div className="flex min-h-[240px] items-center justify-center">
                   <div className="text-center">
                     <div className="mx-auto h-14 w-14 animate-spin rounded-full border-b-4 border-t-4 border-amber-500" />
-                    <p className="mt-4 text-sm text-gray-500">Loading your applications...</p>
+                    <p className="mt-4 text-sm text-gray-500">{tt('Loading your applications...')}</p>
                   </div>
                 </div>
               ) : sortedCases.length === 0 ? (
                 <div className="rounded-3xl border border-dashed border-gray-200 bg-gray-50/80 px-6 py-12 text-center">
-                  <h3 className="text-xl font-semibold text-gray-900">No applications yet</h3>
+                  <h3 className="text-xl font-semibold text-gray-900">{tt('No applications yet')}</h3>
                   <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-gray-500">
-                    Start your first complaint to unlock live tracking, analytics, and end-to-end status updates.
+                    {tt('Start your first complaint to unlock live tracking, analytics, and end-to-end status updates.')}
                   </p>
                   <Link
                     to="/cyber-fraud-report"
                     className="mt-6 inline-flex items-center justify-center rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-amber-600 hover:to-yellow-600"
                   >
-                    File Your First Complaint
+                    {tt('File Your First Complaint')}
                   </Link>
                 </div>
               ) : (
@@ -518,47 +521,47 @@ export default function Dashboard() {
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <h3 className="truncate text-xl font-semibold text-gray-900">
-                                {caseItem.fraudType || 'Cyber Fraud Complaint'}
+                                {tt(caseItem.fraudType || 'Cyber Fraud Complaint')}
                               </h3>
                               {isFocused && (
                                 <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
-                                  Focused
+                                  {tt('Focused')}
                                 </span>
                               )}
                             </div>
                             <p className="mt-2 text-sm text-gray-500">
-                              Case ID: <span className="font-semibold text-gray-700">{caseItem.caseId || caseItem.id}</span>
+                              {tt('Case ID')}: <span className="font-semibold text-gray-700">{caseItem.caseId || caseItem.id}</span>
                             </p>
                           </div>
                           <span className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${statusMeta.badge}`}>
                             <span className={`h-2 w-2 rounded-full ${statusMeta.dot}`} />
-                            {status}
+                            {tt(status)}
                           </span>
                         </div>
 
                         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                           <div className="rounded-2xl bg-gray-50 p-4">
-                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">Filed On</p>
-                            <p className="mt-2 text-sm font-semibold text-gray-900">{formatDate(caseItem.createdAt)}</p>
+                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">{tt('Filed On')}</p>
+                            <p className="mt-2 text-sm font-semibold text-gray-900">{tt(formatDate(caseItem.createdAt, locale))}</p>
                           </div>
                           <div className="rounded-2xl bg-gray-50 p-4">
-                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">Last Updated</p>
-                            <p className="mt-2 text-sm font-semibold text-gray-900">{formatDateTime(lastUpdatedAt)}</p>
+                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">{tt('Last Updated')}</p>
+                            <p className="mt-2 text-sm font-semibold text-gray-900">{tt(formatDateTime(lastUpdatedAt, locale))}</p>
                           </div>
                           <div className="rounded-2xl bg-gray-50 p-4">
-                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">Reported Amount</p>
-                            <p className="mt-2 text-sm font-semibold text-gray-900">{formatCurrency(getAmount(caseItem))}</p>
+                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">{tt('Reported Amount')}</p>
+                            <p className="mt-2 text-sm font-semibold text-gray-900">{formatCurrency(getAmount(caseItem), locale)}</p>
                           </div>
                           <div className="rounded-2xl bg-gray-50 p-4">
-                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">Current Stage</p>
-                            <p className="mt-2 text-sm font-semibold text-gray-900">{statusMeta.summary}</p>
+                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">{tt('Current Stage')}</p>
+                            <p className="mt-2 text-sm font-semibold text-gray-900">{tt(statusMeta.summary)}</p>
                           </div>
                         </div>
 
                         <div className="mt-5">
                           <div className="mb-2 flex items-center justify-between text-xs font-semibold text-gray-500">
-                            <span>Progress</span>
-                            <span>{statusMeta.progress}%</span>
+                            <span>{tt('Progress')}</span>
+                            <span>{formatNumber(statusMeta.progress)}%</span>
                           </div>
                           <div className="h-2.5 overflow-hidden rounded-full bg-gray-100">
                             <div className="h-full rounded-full" style={{ width: `${statusMeta.progress}%`, background: `linear-gradient(90deg, ${statusMeta.color}, ${statusMeta.color}CC)` }} />
@@ -566,8 +569,8 @@ export default function Dashboard() {
                         </div>
 
                         <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50/80 p-4">
-                          <p className="text-xs uppercase tracking-[0.16em] text-gray-500">Latest Update</p>
-                          <p className="mt-2 text-sm leading-6 text-gray-700">{latestUpdate}</p>
+                          <p className="text-xs uppercase tracking-[0.16em] text-gray-500">{tt('Latest Update')}</p>
+                          <p className="mt-2 text-sm leading-6 text-gray-700">{tt(latestUpdate)}</p>
                         </div>
                       </div>
                     )
@@ -597,12 +600,12 @@ export default function Dashboard() {
           </div> */}
 
           <div className="rounded-[28px] border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">Recent Activity</p>
-            <h2 className="mt-2 text-2xl font-semibold text-gray-900">Latest Updates</h2>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">{tt('Recent Activity')}</p>
+            <h2 className="mt-2 text-2xl font-semibold text-gray-900">{tt('Latest Updates')}</h2>
 
             {recentActivity.length === 0 ? (
               <div className="mt-6 rounded-3xl border border-dashed border-gray-200 bg-gray-50/80 px-5 py-10 text-center text-sm text-gray-500">
-                Activity from your application timeline will appear here once a case is created.
+                {tt('Activity from your application timeline will appear here once a case is created.')}
               </div>
             ) : (
               <div className="mt-6 space-y-4">
@@ -617,14 +620,14 @@ export default function Dashboard() {
                         />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-semibold text-gray-900">{item.fraudType}</p>
-                        <p className="mt-1 text-sm leading-6 text-gray-600">{item.note}</p>
+                        <p className="text-sm font-semibold text-gray-900">{tt(item.fraudType)}</p>
+                        <p className="mt-1 text-sm leading-6 text-gray-600">{tt(item.note)}</p>
                         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                           <span className="font-medium text-gray-700">{item.caseId}</span>
                           <span>•</span>
-                          <span>{item.status}</span>
+                          <span>{tt(item.status)}</span>
                           <span>•</span>
-                          <span>{formatDateTime(item.at)}</span>
+                          <span>{tt(formatDateTime(item.at, locale))}</span>
                         </div>
                       </div>
                     </div>
@@ -635,12 +638,12 @@ export default function Dashboard() {
           </div>
 
           <div className="rounded-[28px] border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">Guidance</p>
-            <h2 className="mt-2 text-2xl font-semibold text-gray-900">What To Watch</h2>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">{tt('Guidance')}</p>
+            <h2 className="mt-2 text-2xl font-semibold text-gray-900">{tt('What To Watch')}</h2>
             <div className="mt-6 space-y-4">
               {sortedCases.length === 0 ? (
                 <div className="rounded-3xl border border-dashed border-gray-200 bg-gray-50/80 px-5 py-8 text-sm leading-6 text-gray-500">
-                  After your first complaint, the dashboard will show which applications need the most attention.
+                  {tt('After your first complaint, the dashboard will show which applications need the most attention.')}
                 </div>
               ) : (
                 sortedCases.slice(0, 3).map((caseItem) => {
@@ -660,10 +663,10 @@ export default function Dashboard() {
                         <p className="text-sm font-semibold text-gray-900">{caseItem.caseId || caseItem.id}</p>
                         <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold ${statusMeta.badge}`}>
                           <span className={`h-2 w-2 rounded-full ${statusMeta.dot}`} />
-                          {status}
+                          {tt(status)}
                         </span>
                       </div>
-                      <p className="mt-2 text-sm leading-6 text-gray-600">{statusGuidance[status] || statusGuidance.Pending}</p>
+                      <p className="mt-2 text-sm leading-6 text-gray-600">{tt(statusGuidance[status] || statusGuidance.Pending)}</p>
                     </div>
                   )
                 })

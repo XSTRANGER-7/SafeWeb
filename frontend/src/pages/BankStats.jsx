@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase.js';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area, ComposedChart } from 'recharts';
+import { useI18n } from '../../i18n';
 
 const COLORS = {
   pending: '#f59e0b',
@@ -14,6 +15,7 @@ const COLORS = {
 
 export default function BankStatisticsPage() {
   const navigate = useNavigate();
+  const { formatCurrency } = useI18n();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     total: 0,
@@ -222,7 +224,7 @@ export default function BankStatisticsPage() {
         <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6 flex items-center justify-between">
           <div>
             <p className="text-gray-600 text-sm font-medium mb-1">Total Amount Lost</p>
-            <p className="text-3xl font-bold text-gray-900">₹{stats.totalAmount.toLocaleString('en-IN')}</p>
+            <p className="text-3xl font-bold text-gray-900">{formatCurrency(stats.totalAmount)}</p>
           </div>
           <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-xl flex items-center justify-center shadow-md">
             <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -234,7 +236,7 @@ export default function BankStatisticsPage() {
         <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6 flex items-center justify-between">
           <div>
             <p className="text-gray-600 text-sm font-medium mb-1">Funds Frozen</p>
-            <p className="text-3xl font-bold text-gray-900">₹{stats.totalFrozenAmount.toLocaleString('en-IN')}</p>
+            <p className="text-3xl font-bold text-gray-900">{formatCurrency(stats.totalFrozenAmount)}</p>
           </div>
           <div className="w-14 h-14 bg-gradient-to-br from-violet-500 to-purple-500 rounded-xl flex items-center justify-center shadow-md">
             <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -246,7 +248,7 @@ export default function BankStatisticsPage() {
         <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6 flex items-center justify-between">
           <div>
             <p className="text-gray-600 text-sm font-medium mb-1">Refunded Amount</p>
-            <p className="text-3xl font-bold text-gray-900">₹{stats.totalRefundedAmount.toLocaleString('en-IN')}</p>
+            <p className="text-3xl font-bold text-gray-900">{formatCurrency(stats.totalRefundedAmount)}</p>
           </div>
           <div className="w-14 h-14 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center shadow-md">
             <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -372,7 +374,7 @@ export default function BankStatisticsPage() {
           </div>
           <div>
             <p className="text-gray-600 text-sm font-medium">Average Amount</p>
-            <p className="text-2xl font-bold text-gray-900">₹{stats.averageAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
+            <p className="text-2xl font-bold text-gray-900">{formatCurrency(stats.averageAmount)}</p>
           </div>
         </div>
 

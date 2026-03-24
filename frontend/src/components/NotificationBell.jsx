@@ -7,7 +7,7 @@ import { useI18n } from '../../i18n'
 
 export default function NotificationBell() {
   const { user } = useAuth()
-  const { t } = useI18n()
+  const { t, translateText: tt, formatRelativeTime } = useI18n()
   const navigate = useNavigate()
   const [notifications, setNotifications] = useState([])
   const [isOpen, setIsOpen] = useState(false)
@@ -166,7 +166,7 @@ export default function NotificationBell() {
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="relative rounded-full p-1.5 text-gray-600 transition-colors hover:bg-amber-50 hover:text-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 sm:p-2"
-        aria-label="Notifications"
+        aria-label={t('notifications.title', 'Notifications')}
       >
         <svg
           className="h-5 w-5 sm:h-6 sm:w-6"
@@ -220,11 +220,11 @@ export default function NotificationBell() {
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
-                  {showOnlyUnread ? 'Show All' : 'Show Unread Only'}
+                  {showOnlyUnread ? tt('Show All') : tt('Show Unread Only')}
                 </button>
                 {!showOnlyUnread && (
                   <span className="text-xs text-gray-500">
-                    {readCount} read
+                    {`${readCount} ${tt('read')}`}
                   </span>
                 )}
               </div>
@@ -280,7 +280,7 @@ export default function NotificationBell() {
                           </p>
                           {!notif.read && (
                             <span className="flex-shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 sm:px-2 sm:text-xs">
-                              New
+                              {tt('New')}
                             </span>
                           )}
                         </div>
@@ -288,9 +288,9 @@ export default function NotificationBell() {
                           {notif.message}
                         </p>
                         <p className="mt-1 text-[11px] text-gray-400">
-                          {formatTime(notif.createdAt)}
+                          {formatRelativeTime(notif.createdAt)}
                           {notif.read && notif.readAt && (
-                            <span className="ml-2">• Read {formatTime(notif.readAt)}</span>
+                            <span className="ml-2">• {tt('Read')} {formatRelativeTime(notif.readAt)}</span>
                           )}
                         </p>
                       </div>
@@ -304,27 +304,5 @@ export default function NotificationBell() {
       )}
     </div>
   )
-}
-
-// Helper function to format timestamp
-function formatTime(timestamp) {
-  if (!timestamp) return ''
-  
-  const now = Date.now()
-  const diff = now - timestamp
-  const seconds = Math.floor(diff / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const hours = Math.floor(minutes / 60)
-  const days = Math.floor(hours / 24)
-
-  if (days > 0) {
-    return `${days} day${days > 1 ? 's' : ''} ago`
-  } else if (hours > 0) {
-    return `${hours} hour${hours > 1 ? 's' : ''} ago`
-  } else if (minutes > 0) {
-    return `${minutes} minute${minutes > 1 ? 's' : ''} ago`
-  } else {
-    return 'Just now'
-  }
 }
 

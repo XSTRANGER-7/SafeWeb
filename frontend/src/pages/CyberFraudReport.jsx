@@ -4,6 +4,7 @@ import { db } from "../../firebase.js";
 import { collection, addDoc, setDoc, query, where, onSnapshot, getDocs } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext.jsx";
 import { notifyNewComplaint } from "../utils/notifications.js";
+import { useI18n } from "../../i18n/index.jsx";
 
 // Allowed file types for evidence uploads
 const ALLOWED_FILE_TYPES = {
@@ -267,15 +268,19 @@ function validateFile(file) {
   ) || Object.keys(ALLOWED_FILE_TYPES).includes(file.type);
   
   if (!isValidType) {
-    return { valid: false, error: `File type not allowed. Allowed types: PDF, Images (JPG, PNG, GIF, WEBP), Word (DOC, DOCX), TXT` };
+    return { valid: false, code: 'unsupported_type' };
   }
   
   // Check file size
   if (file.size > MAX_FILE_SIZE) {
-    return { valid: false, error: `File size exceeds 750KB limit. Your file is ${(file.size / 1024).toFixed(2)}KB` };
+    return {
+      valid: false,
+      code: 'file_too_large',
+      sizeKb: (file.size / 1024).toFixed(2)
+    };
   }
   
-  return { valid: true };
+  return { valid: true, code: null };
 }
 
 // Helper function to convert file to base64
@@ -294,6 +299,7 @@ function fileToBase64(file) {
 
 // Component to load and display evidence files from subcollection
 function EvidenceFilesList({ caseId, evidenceMetadata }) {
+  const { translateText: tt } = useI18n();
   const [evidenceFiles, setEvidenceFiles] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -329,7 +335,7 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
   if (loading) {
     return (
       <div className="pt-4 border-t border-amber-200">
-        <span className="text-xs text-gray-500">Loading evidence files...</span>
+        <span className="text-xs text-gray-500">{tt('Loading evidence files...')}</span>
       </div>
     );
   }
@@ -340,7 +346,7 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
 
   const handleDownload = (fileItem) => {
     try {
-      const fileName = fileItem.name || 'file';
+      const fileName = fileItem.name || tt('File');
       const fileData = fileItem.data;
       const contentType = fileItem.contentType || 'application/octet-stream';
 
@@ -371,16 +377,16 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
       }
     } catch (error) {
       console.error('Error downloading file:', error);
-      alert('Error downloading file. Please try again.');
+      alert(tt('Error downloading file. Please try again.'));
     }
   };
 
   return (
     <div className="pt-4 border-t border-amber-200">
-      <span className="text-xs text-gray-600 mb-2 block">📎 Evidence Files ({evidenceFiles.length})</span>
+      <span className="text-xs text-gray-600 mb-2 block">{tt('Evidence Files')} ({evidenceFiles.length})</span>
       <div className="flex flex-wrap gap-2">
         {evidenceFiles.map((fileItem, idx) => {
-          const fileName = fileItem.name || `File ${idx + 1}`;
+          const fileName = fileItem.name || `${tt('File')} ${idx + 1}`;
           const isUrl = typeof fileItem === 'string' || fileItem.url;
           
           if (isUrl) {
@@ -417,7 +423,7 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
         })}
       </div>
       <p className="text-xs text-gray-500 mt-2">
-        Click files to download evidence (stored in Firestore subcollection)
+        {tt('Click files to download evidence (stored in Firestore subcollection)')}
       </p>
     </div>
   );
@@ -425,9 +431,12 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
 
 // Component to display cases list
 function CasesList({ user, profile, onSwitchToFile }) {
+  const { locale, formatCurrency, translateText: tt } = useI18n();
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCase, setExpandedCase] = useState(null);
+  const formatDate = (value) => (value ? new Date(value).toLocaleDateString(locale) : tt('N/A'));
+  const formatDateTime = (value) => (value ? new Date(value).toLocaleString(locale) : tt('N/A'));
 
   useEffect(() => {
     if (!user) {
@@ -470,7 +479,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
         } else if (error.code === 'failed-precondition') {
           const indexUrl = error.message?.match(/https:\/\/[^\s]+/)?.[0];
           if (indexUrl) {
-            alert(`Firestore index required. Visit: ${indexUrl}`);
+            alert(`${tt('Firestore index required. Visit:')} ${indexUrl}`);
             window.open(indexUrl, '_blank');
           }
         }
@@ -487,7 +496,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
         border: 'border-amber-300',
         icon: '⏳',
         dot: 'bg-amber-500',
-        description: 'Your complaint has been received and is awaiting review'
+        description: tt('Your complaint has been received and is awaiting review')
       },
       'In Process': {
         bg: 'bg-blue-50',
@@ -495,7 +504,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
         border: 'border-blue-300',
         icon: '🔄',
         dot: 'bg-blue-500',
-        description: 'Your complaint is being investigated by authorities'
+        description: tt('Your complaint is being investigated by authorities')
       },
       'Funds Frozen': {
         bg: 'bg-violet-50',
@@ -503,7 +512,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
         border: 'border-violet-300',
         icon: '🔒',
         dot: 'bg-violet-500',
-        description: 'Funds have been frozen pending investigation'
+        description: tt('Funds have been frozen pending investigation')
       },
       'Refunded': {
         bg: 'bg-emerald-50',
@@ -511,7 +520,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
         border: 'border-emerald-300',
         icon: '✅',
         dot: 'bg-emerald-500',
-        description: 'Amount has been refunded to your account'
+        description: tt('Amount has been refunded to your account')
       },
       'Closed': {
         bg: 'bg-gray-50',
@@ -519,7 +528,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
         border: 'border-gray-300',
         icon: '✔️',
         dot: 'bg-gray-500',
-        description: 'Case has been closed'
+        description: tt('Case has been closed')
       }
     };
     return configs[status] || configs['Pending'];
@@ -540,7 +549,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
     return (
       <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-12 text-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-amber-600 mx-auto mb-4"></div>
-        <p className="text-gray-600">Loading cases...</p>
+        <p className="text-gray-600">{tt('Loading cases...')}</p>
       </div>
     );
   }
@@ -556,15 +565,15 @@ function CasesList({ user, profile, onSwitchToFile }) {
         <h3 className="text-xl font-semibold text-gray-800 mb-2">No Cases Found</h3>
         <p className="text-gray-500 mb-4">
           {profile?.role === 'normal' || !profile?.role
-            ? "You haven't filed any complaints yet."
-            : 'No cases available at the moment.'}
+            ? tt("You haven't filed any complaints yet.")
+            : tt('No cases available at the moment.')}
         </p>
         {profile?.role === 'normal' || !profile?.role ? (
           <button
             onClick={onSwitchToFile}
             className="px-6 py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl"
           >
-            File Your First Complaint
+            {tt('File Your First Complaint')}
           </button>
         ) : null}
       </div>
@@ -682,7 +691,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
                           Filed On
                         </div>
                         <p className="text-sm font-semibold text-gray-800">
-                          {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : 'N/A'}
+                          {formatDate(c.createdAt)}
                         </p>
                       </div>
                       {c.transactions && c.transactions[0] && (
@@ -693,7 +702,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
                             </svg>
                             Amount Lost
                           </div>
-                          <p className="text-sm font-bold text-amber-700">₹{c.transactions[0].amount || 0}</p>
+                          <p className="text-sm font-bold text-amber-700">{formatCurrency(c.transactions[0].amount || 0)}</p>
                         </div>
                       )}
                       {c.location && (
@@ -768,7 +777,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <span className="text-xs text-gray-500">Amount Lost</span>
-                            <p className="text-lg font-bold text-amber-700 mt-1">₹{c.transactions[0].amount || 0}</p>
+                            <p className="text-lg font-bold text-amber-700 mt-1">{formatCurrency(c.transactions[0].amount || 0)}</p>
                           </div>
                           {c.transactions[0].txnId && (
                             <div>
@@ -847,7 +856,7 @@ function CasesList({ user, profile, onSwitchToFile }) {
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                                           </svg>
                                           <span>
-                                            {item.at ? new Date(item.at).toLocaleString() : item.timestamp ? new Date(item.timestamp).toLocaleString() : 'N/A'}
+                                            {item.at ? formatDateTime(item.at) : item.timestamp ? formatDateTime(item.timestamp) : 'N/A'}
                                           </span>
                                           {item.by && (
                                             <>
@@ -897,9 +906,11 @@ function CasesList({ user, profile, onSwitchToFile }) {
 
 export default function CyberFraudReport({ user: userProp }) {
   const { user: userFromAuth, profile } = useAuth();
+  const { lang, formatCurrency, formatNumber, translateText: tt } = useI18n();
   const user = userProp || userFromAuth;
   const [searchParams, setSearchParams] = useSearchParams();
   const viewMode = searchParams.get('view') === 'track' ? 'track' : 'file';
+  const defaultPreferredLanguage = lang === 'hi' ? 'Hindi' : lang === 'od' ? 'Odia' : 'English';
   const [currentSection, setCurrentSection] = useState(1); // 1: Personal, 2: Incident, 3: Evidence
   const [form, setForm] = useState({
     // Personal Details (Required)
@@ -913,7 +924,7 @@ export default function CyberFraudReport({ user: userProp }) {
     permanentAddress: "",
     currentAddress: "",
     occupation: "",
-    preferredLanguage: "English",
+    preferredLanguage: defaultPreferredLanguage,
     // Personal Details (Optional)
     idProofType: "",
     idProofNumber: "",
@@ -968,6 +979,98 @@ export default function CyberFraudReport({ user: userProp }) {
     !panOcr.qualityWarning
   );
 
+  const getFileValidationErrorMessage = (validation) => {
+    if (!validation || validation.valid) return '';
+
+    if (validation.code === 'unsupported_type') {
+      return tt('File type not allowed. Allowed types: PDF, Images (JPG, PNG, GIF, WEBP), Word (DOC, DOCX), TXT');
+    }
+
+    if (validation.code === 'file_too_large') {
+      const sizeText = formatNumber(validation.sizeKb, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+
+      if (lang === 'hi') {
+        return `फ़ाइल का आकार 750KB सीमा से अधिक है। आपकी फ़ाइल ${sizeText}KB की है।`;
+      }
+
+      if (lang === 'od') {
+        return `ଫାଇଲ ଆକାର 750KB ସୀମାକୁ ଅତିକ୍ରମ କରିଛି। ଆପଣଙ୍କ ଫାଇଲର ଆକାର ${sizeText}KB ଅଟେ।`;
+      }
+
+      return `File size exceeds 750KB limit. Your file is ${sizeText}KB`;
+    }
+
+    return tt('Unable to process this file.');
+  };
+
+  const getInvalidFilesMessage = (entries) => {
+    if (!entries.length) return '';
+    return `${tt('Invalid files:')}\n${entries.join('\n')}`;
+  };
+
+  const getAttachmentWarningMessage = (failedCount, savedCount) => {
+    if (lang === 'hi') {
+      return `चेतावनी: ${formatNumber(failedCount)} अटैचमेंट प्रोसेस नहीं हो सके। ${formatNumber(savedCount)} अटैचमेंट सफलतापूर्वक सहेजे गए।`;
+    }
+
+    if (lang === 'od') {
+      return `ସଚେତନତା: ${formatNumber(failedCount)}ଟି ସଂଲଗ୍ନକ ପ୍ରକ୍ରିୟାକରଣ ବିଫଳ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଫଳଭାବେ ସଞ୍ଚୟ ହେଲା।`;
+    }
+
+    return `Warning: ${failedCount} attachment(s) failed to process. ${savedCount} attachment(s) were saved successfully.`;
+  };
+
+  const getCaseFiledWithoutAttachmentsMessage = (caseId) => {
+    if (lang === 'hi') {
+      return `मामला दर्ज हो गया (ID: ${caseId}), लेकिन कोई भी अटैचमेंट सहेजा नहीं जा सका।`;
+    }
+
+    if (lang === 'od') {
+      return `ମାମଲା ଦାଖଲ ହେଲା (ID: ${caseId}), କିନ୍ତୁ କୌଣସି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହୋଇପାରିଲା ନାହିଁ।`;
+    }
+
+    return `Case filed (ID: ${caseId}) but no attachments could be saved.`;
+  };
+
+  const getCaseFiledPartialAttachmentsMessage = (caseId, failedCount, savedCount) => {
+    if (lang === 'hi') {
+      return `मामला दर्ज हो गया (ID: ${caseId}), लेकिन ${formatNumber(failedCount)} अटैचमेंट विफल रहे। ${formatNumber(savedCount)} अटैचमेंट सहेजे गए।`;
+    }
+
+    if (lang === 'od') {
+      return `ମାମଲା ଦାଖଲ ହେଲା (ID: ${caseId}), କିନ୍ତୁ ${formatNumber(failedCount)}ଟି ସଂଲଗ୍ନକ ବିଫଳ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହେଲା।`;
+    }
+
+    return `Case filed (ID: ${caseId}) but ${failedCount} attachment(s) failed. ${savedCount} attachment(s) were saved.`;
+  };
+
+  const getComplaintSuccessMessage = (caseId, savedCount) => {
+    if (savedCount > 0) {
+      if (lang === 'hi') {
+        return `शिकायत सफलतापूर्वक दर्ज हो गई। ${formatNumber(savedCount)} अटैचमेंट सहेजे गए। केस ID: ${caseId}।`;
+      }
+
+      if (lang === 'od') {
+        return `ଅଭିଯୋଗ ସଫଳଭାବେ ଦାଖଲ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହେଲା। କେସ ID: ${caseId}।`;
+      }
+
+      return `Complaint filed successfully with ${savedCount} attachment(s). Case ID: ${caseId}.`;
+    }
+
+    if (lang === 'hi') {
+      return `शिकायत सफलतापूर्वक दर्ज हो गई। केस ID: ${caseId}।`;
+    }
+
+    if (lang === 'od') {
+      return `ଅଭିଯୋଗ ସଫଳଭାବେ ଦାଖଲ ହେଲା। କେସ ID: ${caseId}।`;
+    }
+
+    return `Complaint filed successfully. Case ID: ${caseId}.`;
+  };
+
   const setViewMode = (nextView) => {
     const nextParams = new URLSearchParams(searchParams);
     if (nextView === 'track') {
@@ -1006,7 +1109,7 @@ export default function CyberFraudReport({ user: userProp }) {
         if (hasRestoredData) {
           setMessage({ 
             type: 'success', 
-            text: '✅ Your previous form data has been restored. You can continue filling the form.' 
+            text: tt('Your previous form data has been restored. You can continue filling the form.')
           });
           setTimeout(() => setMessage({ type: '', text: '' }), 5000);
         }
@@ -1046,7 +1149,7 @@ export default function CyberFraudReport({ user: userProp }) {
 
   function getCurrentLocation() {
     if (!navigator.geolocation) {
-      setLocationError('Geolocation is not supported by your browser. Please enable location services.');
+      setLocationError(tt('Geolocation is not supported by your browser. Please enable location services.'));
       return;
     }
 
@@ -1067,21 +1170,21 @@ export default function CyberFraudReport({ user: userProp }) {
         setGettingLocation(false);
       },
       (error) => {
-        let errorMessage = 'Unable to get your location. ';
+        let errorMessage = `${tt('Unable to get your location.')} `;
         switch (error.code) {
           case error.PERMISSION_DENIED:
             setLocationPermissionDenied(true);
-            errorMessage += 'Location access was denied. ';
-            errorMessage += 'Please click the button below to try again, or enable location access in your browser settings.';
+            errorMessage += `${tt('Location access was denied.')} `;
+            errorMessage += tt('Please click the button below to try again, or enable location access in your browser settings.');
             break;
           case error.POSITION_UNAVAILABLE:
-            errorMessage += 'Location information is unavailable. Please check your device location settings.';
+            errorMessage += tt('Location information is unavailable. Please check your device location settings.');
             break;
           case error.TIMEOUT:
-            errorMessage += 'Location request timed out. Please try again.';
+            errorMessage += tt('Location request timed out. Please try again.');
             break;
           default:
-            errorMessage += 'An unknown error occurred. Please try again.';
+            errorMessage += tt('An unknown error occurred. Please try again.');
             break;
         }
         setLocationError(errorMessage);
@@ -1104,7 +1207,7 @@ export default function CyberFraudReport({ user: userProp }) {
       setPanDocumentFile(null);
       setPanOcr({
         ...PAN_OCR_INITIAL_STATE,
-        error: 'Please upload a PAN card image in JPG, PNG, or WEBP format.'
+        error: tt('Please upload a PAN card image in JPG, PNG, or WEBP format.')
       });
       input.value = '';
       return;
@@ -1183,13 +1286,13 @@ export default function CyberFraudReport({ user: userProp }) {
       let qualityWarning = '';
 
       if (preparedImage.blurScore < 85) {
-        qualityWarning = 'This image looks blurry or low-contrast. Try scanning again in bright light with the PAN card fully flat.'
+        qualityWarning = tt('This image looks blurry or low-contrast. Try scanning again in bright light with the PAN card fully flat.')
       } else if (!extracted.panNumber || !extracted.fullName) {
-        qualityWarning = 'Some PAN details could not be read clearly. Please verify and correct the fields manually.'
+        qualityWarning = tt('Some PAN details could not be read clearly. Please verify and correct the fields manually.')
       } else if (confidence < 70) {
-        qualityWarning = 'OCR confidence is low. Please review the extracted details carefully before continuing.'
+        qualityWarning = tt('OCR confidence is low. Please review the extracted details carefully before continuing.')
       } else if (!panUploadValidation.valid) {
-        qualityWarning = `PAN details were read, but ${panUploadValidation.error}. Please crop or rescan the image if you want it stored with the complaint.`
+        qualityWarning = `${tt('PAN details were read, but')} ${getFileValidationErrorMessage(panUploadValidation)} ${tt('Please crop or rescan the image if you want it stored with the complaint.')}`
       }
 
       setPanOcr({
@@ -1219,12 +1322,12 @@ export default function CyberFraudReport({ user: userProp }) {
       } else if (extracted.fullName || extracted.panNumber || extracted.parentName) {
         setMessage({
           type: 'success',
-          text: 'PAN card scanned successfully. The image looks clear and the key details were fetched.'
+          text: tt('PAN card scanned successfully. The image looks clear and the key details were fetched.')
         });
       } else {
         setMessage({
           type: 'error',
-          text: 'Image is blurry or PAN details were not fetched properly. Please scan again with a clearer image.'
+          text: tt('Image is blurry or PAN details were not fetched properly. Please scan again with a clearer image.')
         });
       }
       setTimeout(() => setMessage({ type: '', text: '' }), 5000);
@@ -1232,12 +1335,12 @@ export default function CyberFraudReport({ user: userProp }) {
       console.error('PAN OCR failed:', error);
       setPanOcr({
         ...PAN_OCR_INITIAL_STATE,
-        error: 'PAN scan failed. Please upload a clearer PAN image or fill the details manually.',
+        error: tt('PAN scan failed. Please upload a clearer PAN image or fill the details manually.'),
         fileName: file.name
       });
       setMessage({
         type: 'error',
-        text: 'PAN scan failed. Please try again with a clear image.'
+        text: tt('PAN scan failed. Please try again with a clear image.')
       });
       setTimeout(() => setMessage({ type: '', text: '' }), 5000);
     } finally {
@@ -1254,17 +1357,17 @@ export default function CyberFraudReport({ user: userProp }) {
 
     if (sectionNumber === 1) {
       if (!form.fullName.trim()) {
-        setMessage({ type: 'error', text: 'Please enter your full name as per ID proof.' });
+        setMessage({ type: 'error', text: tt('Please enter your full name as per ID proof.') });
         setCurrentSection(1);
         return false;
       }
       if (!phoneRegex.test(form.contactNumber.replace(/\D/g, ''))) {
-        setMessage({ type: 'error', text: 'Please enter a valid 10-digit contact number.' });
+        setMessage({ type: 'error', text: tt('Please enter a valid 10-digit contact number.') });
         setCurrentSection(1);
         return false;
       }
       if (!emailRegex.test(form.email)) {
-        setMessage({ type: 'error', text: 'Please enter a valid email address.' });
+        setMessage({ type: 'error', text: tt('Please enter a valid email address.') });
         setCurrentSection(1);
         return false;
       }
@@ -1281,7 +1384,7 @@ export default function CyberFraudReport({ user: userProp }) {
 
       for (const [key, label] of Object.entries(requiredFields)) {
         if (!form[key] || form[key].trim() === '') {
-          setMessage({ type: 'error', text: `Please fill in the required field: ${label}` });
+          setMessage({ type: 'error', text: `${tt('Please fill in the required field:')} ${tt(label)}` });
           setCurrentSection(2);
           return false;
         }
@@ -1291,12 +1394,12 @@ export default function CyberFraudReport({ user: userProp }) {
 
     if (sectionNumber === 3) {
       if (!termsAccepted) {
-        setMessage({ type: 'error', text: 'Please accept the Terms and Conditions to proceed.' });
+        setMessage({ type: 'error', text: tt('Please accept the Terms and Conditions to proceed.') });
         setCurrentSection(3);
         return false;
       }
       if (!locationData.latitude || !locationData.longitude) {
-        setMessage({ type: 'error', text: 'Please allow location access. Your location is required to file a complaint.' });
+        setMessage({ type: 'error', text: tt('Please allow location access. Your location is required to file a complaint.') });
         setCurrentSection(3);
         if (!gettingLocation) {
           getCurrentLocation();
@@ -1371,7 +1474,7 @@ export default function CyberFraudReport({ user: userProp }) {
         permanentAddress: form.permanentAddress || '',
         currentAddress: form.currentAddress || form.permanentAddress || '',
         occupation: form.occupation || '',
-        preferredLanguage: form.preferredLanguage || 'English',
+        preferredLanguage: form.preferredLanguage || defaultPreferredLanguage,
         idProofType: form.idProofType || '',
         idProofNumber: form.idProofNumber || '',
         panCardAttached: Boolean(panDocumentFile),
@@ -1413,7 +1516,7 @@ export default function CyberFraudReport({ user: userProp }) {
       } catch (createError) {
         // Handle permission errors specifically for case creation
         if (createError.code === 'permission-denied' || createError.message?.includes('permission') || createError.message?.includes('Missing or insufficient permissions')) {
-          throw new Error('PERMISSION_DENIED: Please update Firestore security rules to allow case creation.');
+          throw new Error('PERMISSION_DENIED_CASE_CREATION');
         }
         throw createError;
       }
@@ -1537,12 +1640,12 @@ export default function CyberFraudReport({ user: userProp }) {
         if (uploadFiles.length > 0 && evidenceMetadata.length === 0) {
           setMessage({ 
             type: 'error', 
-            text: `Warning: No attachments could be processed. The case will be created without saved documents.` 
+            text: tt('Warning: No attachments could be processed. The case will be created without saved documents.')
           });
         } else if (uploadFiles.length > evidenceMetadata.length) {
           setMessage({ 
             type: 'error', 
-            text: `Warning: ${uploadFiles.length - evidenceMetadata.length} attachment(s) failed to process. ${evidenceMetadata.length} attachment(s) were saved successfully.` 
+            text: getAttachmentWarningMessage(uploadFiles.length - evidenceMetadata.length, evidenceMetadata.length)
           });
         }
       }
@@ -1550,18 +1653,17 @@ export default function CyberFraudReport({ user: userProp }) {
       if (uploadFiles.length > 0 && evidenceMetadata.length === 0) {
         setMessage({
           type: 'error',
-          text: `Case filed (ID: ${caseId}) but no attachments could be saved.`
+          text: getCaseFiledWithoutAttachmentsMessage(caseId)
         });
       } else if (uploadFiles.length > 0 && evidenceMetadata.length < uploadFiles.length) {
         setMessage({
           type: 'error',
-          text: `Case filed (ID: ${caseId}) but ${uploadFiles.length - evidenceMetadata.length} attachment(s) failed. ${evidenceMetadata.length} attachment(s) were saved.`
+          text: getCaseFiledPartialAttachmentsMessage(caseId, uploadFiles.length - evidenceMetadata.length, evidenceMetadata.length)
         });
       } else {
-        const evidenceMsg = evidenceMetadata.length > 0 ? ` with ${evidenceMetadata.length} attachment(s)` : '';
         setMessage({
           type: 'success',
-          text: `Complaint filed successfully${evidenceMsg}. Case ID: ${caseId}.`
+          text: getComplaintSuccessMessage(caseId, evidenceMetadata.length)
         });
       }
       
@@ -1577,7 +1679,7 @@ export default function CyberFraudReport({ user: userProp }) {
         permanentAddress: "",
         currentAddress: "",
         occupation: "",
-        preferredLanguage: "English",
+        preferredLanguage: defaultPreferredLanguage,
         idProofType: "",
         idProofNumber: "",
         incidentDate: "",
@@ -1610,21 +1712,21 @@ export default function CyberFraudReport({ user: userProp }) {
       setTimeout(() => setMessage({ type: '', text: '' }), 5000);
     } catch (err) {
       console.error('Submit error:', err);
-      let errorMsg = 'Submit failed: ' + err.message;
+      let errorMsg = `${tt('Submit failed:')} ${err.message}`;
       
       // Handle Firestore permission errors
-      if (err.code === 'permission-denied' || err.message?.includes('permission') || err.message?.includes('Missing or insufficient permissions')) {
-        errorMsg = '⚠️ Firestore permission denied. Please update Firestore security rules in Firebase Console to allow case creation.';
+      if (err.message === 'PERMISSION_DENIED_CASE_CREATION' || err.code === 'permission-denied' || err.message?.includes('permission') || err.message?.includes('Missing or insufficient permissions')) {
+        errorMsg = tt('Firestore permission denied. Please update Firestore security rules in Firebase Console to allow case creation.');
         console.warn('💡 To fix: Update Firestore security rules to allow authenticated users to create cases.');
         console.warn('💡 See firestore.rules file for the correct rules.');
       } else if (err.message?.includes('ERR_BLOCKED_BY_CLIENT') || err.message?.includes('blocked')) {
         // Ad blocker or browser extension blocking requests
-        errorMsg = '⚠️ Request blocked by browser extension or ad blocker. Please disable ad blockers for this site and try again.';
+        errorMsg = tt('Request blocked by browser extension or ad blocker. Please disable ad blockers for this site and try again.');
         console.warn('⚠️ Firestore request blocked (likely by ad blocker). Please disable ad blockers.');
       } else if (err.message?.includes('CORS') || err.code === 'storage/unauthorized') {
-        errorMsg = 'CORS Error: Please configure Firebase Storage CORS. See console for details.';
+        errorMsg = tt('CORS Error: Please configure Firebase Storage CORS. See console for details.');
       } else if (err.message?.includes('network') || err.message?.includes('fetch')) {
-        errorMsg = 'Network error: Please check your internet connection and try again.';
+        errorMsg = tt('Network error: Please check your internet connection and try again.');
       }
       
       setMessage({ type: 'error', text: errorMsg });
@@ -2120,14 +2222,7 @@ export default function CyberFraudReport({ user: userProp }) {
                     >
                       <option value="English">English</option>
                       <option value="Hindi">Hindi</option>
-                      <option value="Marathi">Marathi</option>
-                      <option value="Gujarati">Gujarati</option>
-                      <option value="Tamil">Tamil</option>
-                      <option value="Telugu">Telugu</option>
-                      <option value="Kannada">Kannada</option>
-                      <option value="Malayalam">Malayalam</option>
-                      <option value="Bengali">Bengali</option>
-                      <option value="Punjabi">Punjabi</option>
+                      <option value="Odia">Odia</option>
                     </select>
                   </div>
                 </div>
@@ -2634,14 +2729,14 @@ export default function CyberFraudReport({ user: userProp }) {
                         if (validation.valid) {
                           validFiles.push(file);
                         } else {
-                          errors.push(`${file.name}: ${validation.error}`);
+                          errors.push(`${file.name}: ${getFileValidationErrorMessage(validation)}`);
                         }
                       });
                       
                       if (errors.length > 0) {
                         setMessage({ 
                           type: 'error', 
-                          text: `Invalid files:\n${errors.join('\n')}` 
+                          text: getInvalidFilesMessage(errors)
                         });
                         setTimeout(() => setMessage({ type: '', text: '' }), 8000);
                       }
@@ -2733,14 +2828,14 @@ export default function CyberFraudReport({ user: userProp }) {
                       if (validation.valid) {
                         validFiles.push(file);
                       } else {
-                        errors.push(`${file.name}: ${validation.error}`);
+                        errors.push(`${file.name}: ${getFileValidationErrorMessage(validation)}`);
                       }
                     });
                     
                     if (errors.length > 0) {
                       setMessage({ 
                         type: 'error', 
-                        text: `Invalid files:\n${errors.join('\n')}` 
+                        text: getInvalidFilesMessage(errors)
                       });
                       setTimeout(() => setMessage({ type: '', text: '' }), 8000);
                     }
@@ -2889,7 +2984,7 @@ export default function CyberFraudReport({ user: userProp }) {
                 <p>Name: {form.fullName || 'Not provided'}</p>
                 <p>Contact: {form.contactNumber || 'Not provided'}</p>
                 <p>Incident Type: {form.incidentType || 'Not provided'}</p>
-                <p>Amount Lost: {form.amountLost ? `Rs. ${form.amountLost}` : 'Not specified'}</p>
+                <p>Amount Lost: {form.amountLost ? formatCurrency(form.amountLost) : 'Not specified'}</p>
                 <p>PAN Attached: {panDocumentFile ? 'Yes' : 'No'}</p>
                 <p>Total Attachments: {selectedAttachments.length}</p>
                 <p>Location: {locationData.latitude ? 'Captured' : 'Not captured'}</p>
@@ -2905,7 +3000,7 @@ export default function CyberFraudReport({ user: userProp }) {
                 <p>• Name: {form.fullName || 'Not provided'}</p>
                 <p>• Contact: {form.contactNumber || 'Not provided'}</p>
                 <p>• Incident Type: {form.incidentType || 'Not provided'}</p>
-                <p>• Amount Lost: {form.amountLost ? `₹${form.amountLost}` : 'Not specified'}</p>
+                <p>• Amount Lost: {form.amountLost ? formatCurrency(form.amountLost) : 'Not specified'}</p>
                 <p>• Evidence Files: {files.length} file(s)</p>
                 <p>• Location: {locationData.latitude ? 'Captured ✓' : 'Not captured'}</p>
                 <p>• Terms Accepted: {termsAccepted ? 'Yes ✓' : 'No'}</p>

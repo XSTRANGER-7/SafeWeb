@@ -4,6 +4,7 @@ import { db } from "../../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNavigate } from "react-router-dom";
 import { notifyVictimPoliceUpdate, createNotificationForRole } from "../utils/notifications.js";
+import { useI18n } from "../../i18n/index.jsx";
 
 // Component to load and display evidence files from subcollection
 function EvidenceFilesList({ caseId, evidenceMetadata }) {
@@ -162,6 +163,7 @@ function EvidenceFilesList({ caseId, evidenceMetadata }) {
 
 export default function PoliceDashboard() {
   const { userProfile, loading } = useAuth();
+  const { locale } = useI18n();
   const [cases, setCases] = useState([]);
   const [filteredCases, setFilteredCases] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -184,6 +186,7 @@ export default function PoliceDashboard() {
     sortBy: 'newest' // 'newest', 'oldest', 'updated'
   });
   const navigate = useNavigate();
+  const formatDateTime = (value, fallback = 'Unknown') => (value ? new Date(value).toLocaleString(locale) : fallback);
 
   useEffect(() => {
     const q = query(collection(db, 'cases'), orderBy('createdAt','desc'));
@@ -1039,7 +1042,7 @@ export default function PoliceDashboard() {
                                       </p>
                                     )}
                                     <p className="text-xs text-gray-500 font-medium">
-                                      {new Date(item.timestamp).toLocaleString()} {item.by ? `• by ${item.by}` : ''}
+                                      {formatDateTime(item.timestamp)} {item.by ? `• by ${item.by}` : ''}
                                     </p>
                                   </div>
                                 </div>
@@ -1070,7 +1073,7 @@ export default function PoliceDashboard() {
                     <div>
                       <label className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2 block">Created</label>
                       <p className="text-base font-semibold text-gray-800">
-                        {selected.createdAt ? new Date(selected.createdAt).toLocaleString() : 'Unknown'}
+                        {formatDateTime(selected.createdAt)}
                       </p>
                     </div>
                   </div>
@@ -1107,7 +1110,7 @@ export default function PoliceDashboard() {
                         {selected.locationTimestamp && (
                           <div className="bg-white rounded-lg p-3 border border-amber-200">
                             <label className="text-xs font-semibold text-gray-500 uppercase block mb-1">Captured At</label>
-                            <p className="text-sm text-gray-800">{new Date(selected.locationTimestamp).toLocaleString()}</p>
+                            <p className="text-sm text-gray-800">{formatDateTime(selected.locationTimestamp)}</p>
                           </div>
                         )}
                       </div>
@@ -1292,7 +1295,7 @@ export default function PoliceDashboard() {
                           <label className="text-xs font-semibold text-gray-500 uppercase">Date & Time of Incident</label>
                           <p className="text-gray-800 font-medium mt-1">
                             {selected.incidentDate 
-                              ? new Date(selected.incidentDate).toLocaleString() 
+                              ? formatDateTime(selected.incidentDate) 
                               : 'Not provided'}
                           </p>
                         </div>
@@ -1300,7 +1303,7 @@ export default function PoliceDashboard() {
                           <label className="text-xs font-semibold text-gray-500 uppercase">Date & Time of Reporting</label>
                           <p className="text-gray-800 font-medium mt-1">
                             {selected.reportingDate 
-                              ? new Date(selected.reportingDate).toLocaleString() 
+                              ? formatDateTime(selected.reportingDate) 
                               : 'Not provided'}
                           </p>
                         </div>
@@ -1409,7 +1412,7 @@ export default function PoliceDashboard() {
                           {selected.transactions[0].time && (
                             <div>
                               <label className="text-xs font-semibold text-gray-500 uppercase">Transaction Time</label>
-                              <p className="text-gray-800 mt-1">{new Date(selected.transactions[0].time).toLocaleString()}</p>
+                              <p className="text-gray-800 mt-1">{formatDateTime(selected.transactions[0].time)}</p>
                             </div>
                           )}
                         </div>
@@ -1442,7 +1445,7 @@ export default function PoliceDashboard() {
                               {msg.from === 'police' ? '👮 Police' : '🏦 Bank'}
                             </span>
                             <span className="text-xs text-gray-500">
-                              {new Date(msg.timestamp).toLocaleString()}
+                              {formatDateTime(msg.timestamp)}
                             </span>
                           </div>
                           <p className="text-gray-800 text-sm">{msg.message}</p>

@@ -1,15 +1,41 @@
 {
-    "nav": { "home":"Home", "features":"Features", "analytics":"Analytics", "docs":"Docs", "login":"Login" },
-    "hero": { "title":"Cyber Fraud Victim Support", "subtitle":"Track complaints, coordinate with police and banks, get updates in real-time." , "cta":"Get Started" },
-    "features": { "heading":"Our Features", "phishing":"Phishing Detection", "women":"Women Safety", "cyber":"Cyber Fraud" },
-    "login": { "title":"Sign in", "phone":"Sign in with Phone", "aadhaar":"Aadhaar (Demo)", "role":"Select Role", "normal":"Normal", "police":"Police", "bank":"Bank" },
-    "footer": { "about":"About", "contact":"Contact", "privacy":"Privacy Policy" },
-    "notifications": {
-        "title": "Notifications",
-        "markAllRead": "Mark all as read",
-        "loading": "Loading...",
-        "noNotifications": "No notifications",
-        "noUnreadNotifications": "No unread notifications"
-    }
+  "nav": {
+    "home": "Home",
+    "features": "Features",
+    "analytics": "Analytics",
+    "docs": "Docs",
+    "login": "Login",
+    "tagline": "Secure. Report. Protect."
+  },
+  "hero": {
+    "titleLead": "Hello! I'm",
+    "titleName": "Mr. OP",
+    "subtitle": "Your Virtual Assistant",
+    "description": "I'm Mr. OP, your virtual agent powered by Odisha Police. I'm here to help you access multiple services and support systems that will assist you in times of need."
+  },
+  "features": {
+    "heading": "Features",
+    "phishing": "Phishing Detection",
+    "women": "Women Safety",
+    "cyber": "Cyber Fraud"
+  },
+  "footer": {
+    "about": "About",
+    "contact": "Contact",
+    "privacy": "Privacy Policy"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "markAllRead": "Mark all as read",
+    "loading": "Loading...",
+    "noNotifications": "No notifications",
+    "noUnreadNotifications": "No unread notifications"
+  },
+  "language": {
+    "label": "Language"
+  },
+  "docs": {
+    "title": "Documentation",
+    "description": "Docs placeholder - integration guides and API documentation will be here."
   }
-  
+}

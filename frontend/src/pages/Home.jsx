@@ -4,14 +4,17 @@ import FeatureCards from '../components/FeatureCards'
 import odishaPoliceLogo from '../assets/op.webp'
 import rbiLogo from '../assets/rbi.webp'
 import npciLogo from '../assets/npci.webp'
+import { useI18n } from '../../i18n/index.jsx'
 
 export default function Home() {
+  const { t } = useI18n()
+
   return (
     <div>
       <Hero />
 
       <section className="mb-8">
-        <h2 className="mb-4 text-2xl font-semibold sm:text-3xl">Features</h2>
+        <h2 className="mb-4 text-2xl font-semibold sm:text-3xl">{t('features.heading', 'Features')}</h2>
         <FeatureCards />
       </section>
 

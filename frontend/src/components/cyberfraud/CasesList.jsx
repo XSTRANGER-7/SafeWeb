@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../../../firebase.js";
 import EvidenceFilesList from "./EvidenceFilesList.jsx";
+import { useI18n } from "../../../i18n/index.jsx";
 
 function getStatusConfig(status) {
   const configs = {
@@ -63,9 +64,12 @@ function getStatusProgress(status) {
 }
 
 export default function CasesList({ user, profile, onSwitchToFile }) {
+  const { locale, formatCurrency } = useI18n();
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCase, setExpandedCase] = useState(null);
+  const formatDate = (value) => (value ? new Date(value).toLocaleDateString(locale) : 'N/A');
+  const formatDateTime = (value) => (value ? new Date(value).toLocaleString(locale) : 'N/A');
 
   useEffect(() => {
     if (!user) {
@@ -244,7 +248,7 @@ export default function CasesList({ user, profile, onSwitchToFile }) {
                           Filed On
                         </div>
                         <p className="text-sm font-semibold text-gray-800">
-                          {currentCase.createdAt ? new Date(currentCase.createdAt).toLocaleDateString() : 'N/A'}
+                          {formatDate(currentCase.createdAt)}
                         </p>
                       </div>
                       {currentCase.transactions && currentCase.transactions[0] && (
@@ -255,7 +259,7 @@ export default function CasesList({ user, profile, onSwitchToFile }) {
                             </svg>
                             Amount Lost
                           </div>
-                          <p className="text-sm font-bold text-amber-700">Rs. {currentCase.transactions[0].amount || 0}</p>
+                          <p className="text-sm font-bold text-amber-700">{formatCurrency(currentCase.transactions[0].amount || 0)}</p>
                         </div>
                       )}
                       {currentCase.location && (
@@ -396,7 +400,7 @@ export default function CasesList({ user, profile, onSwitchToFile }) {
                                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                                         </svg>
                                         <span>
-                                          {item.at ? new Date(item.at).toLocaleString() : item.timestamp ? new Date(item.timestamp).toLocaleString() : 'N/A'}
+                                          {item.at ? formatDateTime(item.at) : item.timestamp ? formatDateTime(item.timestamp) : 'N/A'}
                                         </span>
                                         {item.by ? <span>by {item.by}</span> : null}
                                       </div>

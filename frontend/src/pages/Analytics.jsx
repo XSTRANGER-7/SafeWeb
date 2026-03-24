@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { db } from '../../firebase'
 import { collection, onSnapshot } from 'firebase/firestore'
+import { useI18n } from '../../i18n'
 import { 
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, 
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -16,6 +17,7 @@ const COLORS = {
 }
 
 export default function Analytics() {
+  const { formatCurrency } = useI18n()
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
     total: 0,
@@ -248,8 +250,8 @@ export default function Analytics() {
               </svg>
             </div>
           </div>
-          <p className="text-3xl font-bold text-gray-900">₹{stats.totalAmount.toLocaleString('en-IN')}</p>
-          <p className="text-xs text-gray-500 mt-1">Avg: ₹{stats.averageAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
+          <p className="text-3xl font-bold text-gray-900">{formatCurrency(stats.totalAmount)}</p>
+          <p className="text-xs text-gray-500 mt-1">Avg: {formatCurrency(stats.averageAmount)}</p>
         </div>
       </div>
 

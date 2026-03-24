@@ -43,7 +43,7 @@ export default function Navbar() {
             <div className="relative shrink-0">
               <img
                 src={logoImage}
-                alt="Government Logo"
+                alt={t('nav.logoAlt', 'Government Logo')}
                 className="h-9 w-9 rounded object-contain sm:h-10 sm:w-10 lg:h-12 lg:w-12"
                 onError={(e) => {
                   e.target.style.display = 'none'
@@ -61,7 +61,7 @@ export default function Navbar() {
                 Safeweb
               </h1>
               <p className="hidden text-xs font-medium text-gray-500 md:block">
-                Secure. Report. Protect.
+                {t('nav.tagline', 'Secure. Report. Protect.')}
               </p>
             </div>
           </Link>
