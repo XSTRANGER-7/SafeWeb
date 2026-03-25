@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useI18n } from '../../i18n/index.jsx'
 import LanguageSwitcher from './LanguageSwitcher'
@@ -19,6 +19,27 @@ export default function Navbar() {
   const { user } = useAuth()
   const location = useLocation()
 
+  const [isVisible, setIsVisible] = useState(true)
+  const [lastScrollY, setLastScrollY] = useState(0)
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY
+      
+      // Hide on scroll down (past 50px), show on scroll up
+      if (currentScrollY > lastScrollY && currentScrollY > 50) {
+        setIsVisible(false)
+      } else if (currentScrollY < lastScrollY) {
+        setIsVisible(true)
+      }
+      
+      setLastScrollY(currentScrollY)
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [lastScrollY])
+
   const isActiveLink = (to) => {
     if (to === '/') {
       return location.pathname === '/'
@@ -36,8 +57,14 @@ export default function Navbar() {
   }
 
   return (
-    <nav className="border-b border-gray-100 bg-white shadow-md">
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-3 py-2.5 sm:px-4 sm:py-3 lg:px-6">
+    <>
+      <div className="h-[57px] sm:h-[65px] lg:h-[73px] w-full shrink-0" aria-hidden="true"></div>
+      <nav 
+        className={`fixed top-0 left-0 right-0 z-[100] border-b border-gray-100 bg-white shadow-md transition-transform duration-300 ease-in-out ${
+          isVisible ? 'translate-y-0' : '-translate-y-full'
+        }`}
+      >
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-3 py-2.5 sm:px-4 sm:py-3 lg:px-6">
         <div className="flex min-w-0 items-center gap-2.5 sm:gap-4">
           <Link to="/" className="group flex min-w-0 items-center gap-3">
             <div className="relative shrink-0">
@@ -92,6 +119,7 @@ export default function Navbar() {
           )}
         </div>
       </div>
-    </nav>
+      </nav>
+    </>
   )
 }
