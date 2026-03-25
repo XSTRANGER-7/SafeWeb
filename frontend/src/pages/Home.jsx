@@ -21,10 +21,8 @@ export default function Home() {
         navigate('/police-dashboard', { replace: true })
       } else if (role === 'bank') {
         navigate('/bank-dashboard', { replace: true })
-      } else if (role === 'normal') {
-        navigate('/dashboard', { replace: true })
       }
-      // Admin role can stay on home page or redirect as needed
+      // Admin and Normal role can stay on home page as requested
     }
   }, [profile, loading, navigate])
 
