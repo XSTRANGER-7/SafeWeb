@@ -21,11 +21,13 @@ import PoliceStats from "./pages/PoliceStats.jsx"
 import BankDashboard from "./pages/BankDashboard.jsx"
 import BankStats from "./pages/BankStats.jsx"
 import ProtectedRoute from './components/ProtectedRoute'
+import GlobalLoader from './components/GlobalLoader'
 
 export default function App() {
   return (
     <I18nProvider>
       <div className="min-h-screen flex flex-col bg-gray-50 text-gray-900">
+        <GlobalLoader />
         <Navbar />
         <main className="container mx-auto flex-1 px-3 py-4 sm:px-4 sm:py-8">
           <Routes>
