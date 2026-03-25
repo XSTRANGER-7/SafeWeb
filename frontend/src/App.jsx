@@ -35,8 +35,8 @@ export default function App() {
             <Route path="/docs" element={<Docs />} />
             <Route path="/login" element={<Login />} />
             <Route path="/setup-accounts" element={<SetupAccounts />} />
-            <Route path="/login/police" element={<PBLogin />} />
-            <Route path="/login/bank" element={<PBLogin />} />
+            <Route path="/login/police" element={<PBLogin key="police" />} />
+            <Route path="/login/bank" element={<PBLogin key="bank" />} />
             <Route path="/admin" element={<Admin />} />
             <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['normal']}><Dashboard /></ProtectedRoute>} />
             <Route path="/phishing-detection" element={<PhishingDetection />} />

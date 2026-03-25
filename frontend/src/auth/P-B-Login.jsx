@@ -17,8 +17,8 @@ export default function PBLogin() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
-  
-  const role = getRoleFromPath(location.pathname)
+
+  const role = React.useMemo(() => getRoleFromPath(location.pathname), [location.pathname])
 
   // Clear inputs and error when route changes (e.g. from police to bank login)
   useEffect(() => {
@@ -93,7 +93,7 @@ export default function PBLogin() {
     } catch (err) {
       console.error('Login error:', err)
       let errorMessage = 'Login failed. Please check your credentials.'
-      
+
       if (err.code === 'auth/user-not-found') {
         errorMessage = 'No account found with this email address.'
       } else if (err.code === 'auth/wrong-password') {
@@ -107,7 +107,7 @@ export default function PBLogin() {
       } else if (err.message) {
         errorMessage = err.message
       }
-      
+
       setError(errorMessage)
     } finally {
       setLoading(false)
