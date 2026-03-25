@@ -673,7 +673,14 @@ export default function BankDashboard() {
             {filteredCases.map((c, index) => (
               <div
                 key={c.id || c.caseId}
-                onClick={() => setSelected(c)}
+                onClick={() => {
+                  setSelected(c);
+                  if (window.innerWidth < 1024) {
+                    setTimeout(() => {
+                      document.getElementById('case-details-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 100);
+                  }
+                }}
                 className={`bg-white rounded-xl shadow-sm border-2 cursor-pointer transition-all duration-200 p-4 hover:shadow-md hover:border-amber-300 ${
                   selected?.id === c.id ? 'ring-2 ring-amber-400 border-amber-400 shadow-lg scale-[1.01]' : 'border-gray-200'
                 }`}
@@ -701,7 +708,7 @@ export default function BankDashboard() {
         </div>
 
         {/* Case Details */}
-        <div className="lg:col-span-2">
+        <div id="case-details-section" className="lg:col-span-2 scroll-mt-6">
           {selected ? (
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200 px-4 py-8   sm:p-8">
               <div className="flex items-center justify-between mb-6 pb-6 border-b-2 border-gray-200">
