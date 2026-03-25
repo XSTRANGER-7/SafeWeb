@@ -799,7 +799,7 @@ export default function PoliceDashboard() {
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-amber-50/30 to-gray-50 px-2 py-4 sm:p-4 md:p-6">
       {/* Header */}
       <div className="mb-4 md:mb-8">
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 px-2 py-4 sm:p-4 md:p-6 mb-4 md:mb-6">
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 px-4 py-4 sm:p-4 md:p-6 mb-4 md:mb-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-4">
             <div>
               <h1 className="mb-2 flex flex-col gap-3 text-2xl font-bold text-transparent sm:flex-row sm:items-center sm:text-4xl bg-gradient-to-r from-amber-600 to-yellow-600 bg-clip-text">
@@ -864,7 +864,7 @@ export default function PoliceDashboard() {
         )}
 
         {/* Filters */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-200 px-2 py-5 md:p-6 mb-6">
+        <div className="bg-white rounded-xl shadow-md border border-gray-200 px-4 py-5 md:p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-5">
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-2.5">Filter by Status</label>

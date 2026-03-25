@@ -1,13 +1,44 @@
-import React from 'react'
+import React, { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Hero from '../components/Hero'
 import FeatureCards from '../components/FeatureCards'
 import odishaPoliceLogo from '../assets/op.webp'
 import rbiLogo from '../assets/rbi.webp'
 import npciLogo from '../assets/npci.webp'
 import { useI18n } from '../../i18n/index.jsx'
+import { useAuth } from '../context/AuthContext.jsx'
 
 export default function Home() {
   const { t } = useI18n()
+  const { profile, loading } = useAuth()
+  const navigate = useNavigate()
+
+  // Redirect authenticated users to their respective dashboards
+  useEffect(() => {
+    if (!loading && profile) {
+      const role = profile.role
+      if (role === 'police') {
+        navigate('/police-dashboard', { replace: true })
+      } else if (role === 'bank') {
+        navigate('/bank-dashboard', { replace: true })
+      } else if (role === 'normal') {
+        navigate('/dashboard', { replace: true })
+      }
+      // Admin role can stay on home page or redirect as needed
+    }
+  }, [profile, loading, navigate])
+
+  // Show loading while checking auth
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-amber-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
