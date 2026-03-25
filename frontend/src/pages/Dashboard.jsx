@@ -349,6 +349,22 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+          <div className="rounded-[28px] border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">{tt('Quick Actions')}</p>
+            <h2 className="mt-2 text-2xl font-semibold text-gray-900">{tt('Move Faster')}</h2>
+            <div className="mt-6 grid gap-3">
+              {QUICK_ACTIONS.map(([title, description, to]) => (
+                <Link
+                  key={title}
+                  to={to}
+                  className="rounded-3xl border border-gray-200 p-4 transition hover:border-gray-300 hover:bg-gray-50"
+                >
+                  <p className="text-base font-semibold text-gray-900">{tt(title)}</p>
+                  <p className="mt-1 text-sm leading-6 text-gray-500">{tt(description)}</p>
+                </Link>
+              ))}
+            </div>
+          </div>
       </section>
       {error && (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -582,22 +598,6 @@ export default function Dashboard() {
         </div>
 
         <div className="space-y-6">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">{tt('Quick Actions')}</p>
-            <h2 className="mt-2 text-2xl font-semibold text-gray-900">{tt('Move Faster')}</h2>
-            <div className="mt-6 grid gap-3">
-              {QUICK_ACTIONS.map(([title, description, to]) => (
-                <Link
-                  key={title}
-                  to={to}
-                  className="rounded-3xl border border-gray-200 p-4 transition hover:border-gray-300 hover:bg-gray-50"
-                >
-                  <p className="text-base font-semibold text-gray-900">{tt(title)}</p>
-                  <p className="mt-1 text-sm leading-6 text-gray-500">{tt(description)}</p>
-                </Link>
-              ))}
-            </div>
-          </div>
 
           <div className="rounded-[28px] border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-gray-500">{tt('Recent Activity')}</p>
