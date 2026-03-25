@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useI18n } from '../../i18n/index.jsx'
 import { chatbotLogic } from '../utils/ChatbotLogic.jsx'
+import { useAuth } from '../context/AuthContext.jsx'
 
 function WhatsAppIcon({ className = 'h-6 w-6' }) {
   return (
@@ -15,6 +16,7 @@ function WhatsAppIcon({ className = 'h-6 w-6' }) {
 export default function WhatsAppBot() {
   const { t } = useI18n()
   const navigate = useNavigate()
+  const { profile } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState([{ from: "bot", text: "Hi! I’m OP Bot 👮‍♂️. How can I help you today?" }])
   const [input, setInput] = useState("")
@@ -45,6 +47,10 @@ export default function WhatsAppBot() {
     if (e.key === 'Enter') {
       sendMessage();
     }
+  }
+
+  if (profile?.role === 'police' || profile?.role === 'bank') {
+    return null;
   }
 
   return (
