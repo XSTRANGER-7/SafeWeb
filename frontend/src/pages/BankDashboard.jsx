@@ -703,9 +703,9 @@ export default function BankDashboard() {
         {/* Case Details */}
         <div className="lg:col-span-2">
           {selected ? (
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-8">
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-200 px-4 py-8   sm:p-8">
               <div className="flex items-center justify-between mb-6 pb-6 border-b-2 border-gray-200">
-                <h2 className="text-3xl font-bold bg-gradient-to-r from-amber-600 to-yellow-600 bg-clip-text text-transparent">Case Details</h2>
+                <h2 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-amber-600 to-yellow-600 bg-clip-text text-transparent">Case Details</h2>
                 <span className={`px-4 py-2 rounded-lg text-sm font-bold border-2 ${getStatusColor(selected.status)}`}>
                   {selected.status}
                 </span>
@@ -722,7 +722,7 @@ export default function BankDashboard() {
                     </div>
                     <label className="text-lg font-bold text-gray-900">Case Timeline</label>
                   </div>
-                  <div className="bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 p-6 rounded-xl shadow-sm">
+                  <div className="bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 py-6 px-2 sm:p-6 rounded-xl shadow-sm">
                     {(() => {
                       // Build unified timeline array
                       const timeline = [];
