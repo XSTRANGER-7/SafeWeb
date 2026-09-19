@@ -11,6 +11,8 @@ import ComplaintProgress from "../components/cyberfraud/ComplaintProgress.jsx";
 import PersonalDetailsSection from "../components/cyberfraud/PersonalDetailsSection.jsx";
 import IncidentDetailsSection from "../components/cyberfraud/IncidentDetailsSection.jsx";
 import EvidenceSection from "../components/cyberfraud/EvidenceSection.jsx";
+import { ToastContainer } from "../components/ui/Toast.jsx";
+import { useToast } from "../components/ui/useToast.js";
 
 import {
   AADHAAR_OCR_INITIAL_STATE,
@@ -48,6 +50,7 @@ export default function CyberFraudReport({ user: userProp }) {
   const [gettingLocation, setGettingLocation] = useState(false);
   const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
   const [aadhaarOcr, setAadhaarOcr] = useState(AADHAAR_OCR_INITIAL_STATE);
+  const { toasts, showToast, removeToast } = useToast();
 
   const sectionCompletion = {
     1: Boolean(form.fullName.trim()) && /^[0-9]{10}$/.test(form.contactNumber.replace(/\D/g, '')) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email),
@@ -633,11 +636,26 @@ export default function CyberFraudReport({ user: userProp }) {
       }
 
       if (uploadFiles.length > 0 && evidenceMetadata.length === 0) {
-        setMessage({ type: 'error', text: getCaseFiledWithoutAttachmentsMessage(caseId) });
+        showToast({
+          type: 'error',
+          title: 'Complaint Filed — Attachments Failed',
+          message: getCaseFiledWithoutAttachmentsMessage(caseId),
+          duration: 8000
+        });
       } else if (uploadFiles.length > 0 && evidenceMetadata.length < uploadFiles.length) {
-        setMessage({ type: 'error', text: getCaseFiledPartialAttachmentsMessage(caseId, uploadFiles.length - evidenceMetadata.length, evidenceMetadata.length) });
+        showToast({
+          type: 'error',
+          title: 'Complaint Filed — Partial Upload',
+          message: getCaseFiledPartialAttachmentsMessage(caseId, uploadFiles.length - evidenceMetadata.length, evidenceMetadata.length),
+          duration: 8000
+        });
       } else {
-        setMessage({ type: 'success', text: getComplaintSuccessMessage(caseId, evidenceMetadata.length) });
+        showToast({
+          type: 'success',
+          title: '🎉 Complaint Submitted Successfully!',
+          // message: getComplaintSuccessMessage(caseId, evidenceMetadata.length),
+          duration: 7000
+        });
       }
 
       // Reset form
@@ -651,7 +669,7 @@ export default function CyberFraudReport({ user: userProp }) {
       setAadhaarOcr(AADHAAR_OCR_INITIAL_STATE);
       setCurrentSection(1);
       localStorage.removeItem('complaintFormDraft');
-      setTimeout(() => setMessage({ type: '', text: '' }), 5000);
+
     } catch (err) {
       console.error('Submit error:', err);
       let errorMsg = `${tt('Submit failed:')} ${err.message}`;
@@ -662,14 +680,14 @@ export default function CyberFraudReport({ user: userProp }) {
       } else if (err.message?.includes('network') || err.message?.includes('fetch')) {
         errorMsg = tt('Network error: Please check your internet connection and try again.');
       }
-      setMessage({ type: 'error', text: errorMsg });
-      setTimeout(() => setMessage({ type: '', text: '' }), 10000);
+      showToast({ type: 'error', title: 'Submission Failed', message: errorMsg, duration: 10000 });
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
+    <>
     <div className="min-h-[calc(100vh-200px)] py-6 sm:py-8">
       <div className="w-full max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         {/* Header Section */}
@@ -726,17 +744,7 @@ export default function CyberFraudReport({ user: userProp }) {
           <CasesList user={user} profile={profile} onSwitchToFile={() => setViewMode('file')} />
         ) : (
           <form onSubmit={handleSubmit} className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 lg:p-8">
-            {/* Success/Error Alerts */}
-            {message.type === 'success' && (
-              <div className="mb-6 p-4 bg-green-50 border-l-4 border-green-500 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <svg className="w-5 h-5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <p className="text-green-800 font-medium text-sm">{message.text}</p>
-                </div>
-              </div>
-            )}
+            {/* Success/Error Alerts (Aadhaar OCR inline messages) */}
 
             {message.type === 'error' && (
               <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
@@ -817,5 +825,7 @@ export default function CyberFraudReport({ user: userProp }) {
         )}
       </div>
     </div>
+      <ToastContainer toasts={toasts} onClose={removeToast} />
+    </>
   );
 }
