@@ -153,39 +153,7 @@ export default function PersonalDetailsSection({
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-              <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-              Occupation
-            </label>
-            <input
-              type="text"
-              placeholder="e.g., Student, Engineer, Business"
-              value={form.occupation}
-              onChange={(e) => setForm({ ...form, occupation: e.target.value })}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-            />
-          </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-              <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
-              </svg>
-              Preferred Language
-            </label>
-            <select
-              value={form.preferredLanguage}
-              onChange={(e) => setForm({ ...form, preferredLanguage: e.target.value })}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-            >
-              <option value="English">English</option>
-              <option value="Hindi">Hindi</option>
-              <option value="Odia">Odia</option>
-            </select>
-          </div>
         </div>
 
         <div className="mt-6">
@@ -247,8 +215,7 @@ export default function PersonalDetailsSection({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
                 Aadhaar Number (12-Digit)
               </label>
@@ -269,51 +236,7 @@ export default function PersonalDetailsSection({
                 maxLength={14}
                 className="w-full font-mono tracking-wider px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
               />
-              <p className="text-xs text-gray-400 mt-1">Pre-filled automatically when you scan or upload your Aadhaar card</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Aadhaar Card Attachment
-              </label>
-              {aadhaarDocumentFile ? (
-                <div className="flex items-center justify-between p-3 rounded-lg border-2 border-emerald-200 bg-emerald-50/60">
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    <img
-                      src={aadhaarOcr.previewUrl || '/mock_aadhaar.webp'}
-                      alt="Aadhaar preview"
-                      className="h-10 w-14 rounded object-cover border border-emerald-300 shadow-xs"
-                    />
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-emerald-900 truncate">{aadhaarDocumentFile.name}</p>
-                      <p className="text-[11px] text-emerald-700 font-medium">Ready for verification</p>
-                    </div>
-                  </div>
-                  <label className="shrink-0 cursor-pointer text-xs font-semibold text-amber-700 hover:text-amber-800 underline ml-2">
-                    Change
-                    <input
-                      type="file"
-                      accept={AADHAAR_SCAN_ACCEPT}
-                      onChange={handleAadhaarScan}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-              ) : (
-                <label className="flex items-center justify-center gap-2 w-full px-4 py-3 border-2 border-dashed border-amber-300 rounded-lg bg-amber-50/40 hover:bg-amber-50 text-amber-800 text-sm font-semibold cursor-pointer transition-colors">
-                  <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                  <span>Upload / Attach Aadhaar Card</span>
-                  <input
-                    type="file"
-                    accept={AADHAAR_SCAN_ACCEPT}
-                    onChange={handleAadhaarScan}
-                    className="hidden"
-                  />
-                </label>
-              )}
-            </div>
+              <p className="text-xs text-gray-400 mt-1">Pre-filled automatically when you scan or upload your Aadhaar card above</p>
           </div>
         </div>
       </div>

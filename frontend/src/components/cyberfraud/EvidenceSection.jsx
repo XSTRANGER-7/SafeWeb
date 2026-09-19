@@ -23,17 +23,6 @@ export default function EvidenceSection({
 }) {
   return (
     <div className="space-y-6 animate-fadeIn">
-      <div className="mb-6 hidden rounded-r-lg border-l-4 border-amber-500 bg-gradient-to-r from-amber-50 to-yellow-50 py-4 pl-6 sm:block">
-        <div className="flex items-center gap-3 mb-2">
-          <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-          </svg>
-          <h4 className="text-xl font-bold text-gray-900">Documents & Review</h4>
-        </div>
-        <p className="text-sm text-gray-600">
-          Upload valid supporting documents, confirm location access, and review the complaint before final submission.
-        </p>
-      </div>
 
       <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6 space-y-6">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
@@ -155,13 +144,7 @@ export default function EvidenceSection({
                   </svg>
                   <span className="font-semibold text-sm">Location captured successfully</span>
                 </div>
-                <div className="text-xs text-gray-700 space-y-1">
-                  <p>Latitude: <span className="font-mono">{locationData.latitude.toFixed(6)}</span></p>
-                  <p>Longitude: <span className="font-mono">{locationData.longitude.toFixed(6)}</span></p>
-                  {locationData.accuracy && (
-                    <p>Accuracy: ±{Math.round(locationData.accuracy)} meters</p>
-                  )}
-                </div>
+                
               </div>
             ) : (
               <div>
@@ -208,29 +191,8 @@ export default function EvidenceSection({
             <label htmlFor="termsCheckbox" className="flex-1 text-sm text-gray-700 cursor-pointer">
               <span className="font-semibold">I accept the Terms and Conditions</span>
               <span className="text-red-500 ml-1">*</span>
-              <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-gray-600">
-                <p>I confirm the complaint details are accurate.</p>
-                <p className="mt-1">I allow the authorities to use the attached information and location for verification.</p>
-                <p className="mt-1">I understand officials may contact me on the shared phone number or email.</p>
-              </div>
+            
             </label>
-          </div>
-        </div>
-
-        {/* Summary Card */}
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <p className="mb-2 text-sm text-gray-700">
-            <span className="font-semibold">Summary:</span> Review before submit
-          </p>
-          <div className="space-y-1 text-xs text-gray-600">
-            <p>Name: {form.fullName || 'Not provided'}</p>
-            <p>Contact: {form.contactNumber || 'Not provided'}</p>
-            <p>Incident Type: {form.incidentType || 'Not provided'}</p>
-            <p>Amount Lost: {form.amountLost ? formatCurrency(form.amountLost) : 'Not specified'}</p>
-            <p>Aadhaar Attached: {aadhaarDocumentFile ? 'Yes' : 'No'}</p>
-            <p>Total Attachments: {selectedAttachments.length}</p>
-            <p>Location: {locationData.latitude ? 'Captured' : 'Not captured'}</p>
-            <p>Terms Accepted: {termsAccepted ? 'Yes' : 'No'}</p>
           </div>
         </div>
       </div>
