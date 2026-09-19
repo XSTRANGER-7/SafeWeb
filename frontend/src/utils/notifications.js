@@ -2,99 +2,107 @@ import { collection, addDoc, query, where, getDocs } from 'firebase/firestore'
 import { db } from '../../firebase'
 
 /**
- * Create a notification for a specific user
+ * Create a notification for a specific user (by UID and/or Email)
  */
-export async function createNotification(recipientId, title, message, link = null, type = 'info') {
+export async function createNotification(recipientId, title, message, link = null, type = 'info', recipientEmail = null, caseId = null) {
   try {
-    if (!recipientId) {
-      console.warn('⚠️ Cannot create notification: recipientId is missing')
-      return
+    const targetId = recipientId && recipientId !== 'anonymous' ? recipientId : (recipientEmail || '')
+    if (!targetId && !recipientEmail) {
+      console.warn('⚠️ Cannot create notification: neither recipientId nor recipientEmail is provided')
+      return null
     }
-    
+
     const notificationData = {
-      recipientId,
+      recipientId: targetId,
+      recipientEmail: recipientEmail || null,
+      caseId: caseId || null,
       title,
       message,
       link,
       type,
       read: false,
+      readBy: [],
       createdAt: Date.now()
     }
-    
+
     const docRef = await addDoc(collection(db, 'notifications'), notificationData)
-    console.log(`✅ Notification created: ${docRef.id} for user ${recipientId}`, notificationData)
+    console.log(`✅ Notification created: ${docRef.id}`, notificationData)
     return docRef.id
   } catch (error) {
     console.error('❌ Error creating notification:', error)
-    console.error('Notification data:', { recipientId, title, message, link, type })
-    throw error
+    return null
   }
 }
 
 /**
  * Create notifications for all users with a specific role (police or bank)
  */
-export async function createNotificationForRole(role, title, message, link = null, type = 'info') {
+export async function createNotificationForRole(role, title, message, link = null, type = 'info', caseId = null) {
   try {
-    // Query users collection for users with the specified role
-    const usersRef = collection(db, 'users')
-    const q = query(usersRef, where('role', '==', role))
-    const snapshot = await getDocs(q)
+    const now = Date.now()
 
-    if (snapshot.empty) {
-      console.warn(`⚠️ No users found with role: ${role}`)
-      // Also check officials collection
+    // 1. Create a broad role notification with recipientRole: role
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        recipientRole: role,
+        recipientId: `role_${role}`,
+        caseId: caseId || null,
+        title,
+        message,
+        link,
+        type,
+        read: false,
+        readBy: [],
+        createdAt: now
+      })
+    } catch (e) {
+      console.warn('Broad role notification creation failed:', e)
+    }
+
+    // 2. Also query users and officials collections to create direct notifications
+    const recipients = new Set()
+
+    try {
+      const usersRef = collection(db, 'users')
+      const q = query(usersRef, where('role', '==', role))
+      const snapshot = await getDocs(q)
+      snapshot.forEach(d => recipients.add(d.id))
+    } catch (err) {
+      console.warn('Could not query users collection for role:', role, err)
+    }
+
+    try {
       const officialsRef = collection(db, 'officials')
       const officialsQ = query(officialsRef, where('role', '==', role))
       const officialsSnapshot = await getDocs(officialsQ)
-      
-      if (officialsSnapshot.empty) {
-        console.warn(`⚠️ No officials found with role: ${role}`)
-        return
-      }
-      
-      const promises = []
-      officialsSnapshot.forEach((doc) => {
-        const userId = doc.id
-        promises.push(
-          addDoc(collection(db, 'notifications'), {
-            recipientId: userId,
-            title,
-            message,
-            link,
-            type,
-            read: false,
-            createdAt: Date.now()
-          })
-        )
-      })
-      
-      await Promise.all(promises)
-      console.log(`✅ Created ${promises.length} notifications for ${role} users (from officials)`)
-      return
+      officialsSnapshot.forEach(d => recipients.add(d.id))
+    } catch (err) {
+      console.warn('Could not query officials collection for role:', role, err)
     }
 
     const promises = []
-    snapshot.forEach((doc) => {
-      const userId = doc.id
+    recipients.forEach((userId) => {
       promises.push(
         addDoc(collection(db, 'notifications'), {
           recipientId: userId,
+          recipientRole: role,
+          caseId: caseId || null,
           title,
           message,
           link,
           type,
           read: false,
-          createdAt: Date.now()
-        })
+          readBy: [],
+          createdAt: now
+        }).catch(err => console.warn('Direct notification write failed:', err))
       )
     })
 
-    await Promise.all(promises)
-    console.log(`✅ Created ${promises.length} notifications for ${role} users`)
+    if (promises.length > 0) {
+      await Promise.all(promises)
+    }
   } catch (error) {
     console.error(`❌ Error creating notifications for ${role} users:`, error)
-    throw error
   }
 }
 
@@ -103,63 +111,60 @@ export async function createNotificationForRole(role, title, message, link = nul
  */
 export async function notifyNewComplaint(caseId, caseData) {
   try {
-    const title = 'New Cyber Fraud Complaint Filed'
-    const message = `A new complaint has been filed. Case ID: ${caseId}. Victim: ${caseData.victimName || 'Unknown'}. Amount: ₹${caseData.amountLost || 0}`
-    
+    const title = '🚨 New Cyber Fraud Complaint Filed'
+    const message = `Case ${caseId} filed. Victim: ${caseData.victimName || 'Citizen'}. Amount: ₹${Number(caseData.amountLost || 0).toLocaleString('en-IN')}`
+
     // Notify all police users - link to police dashboard
-    await createNotificationForRole('police', title, message, `/police-dashboard?caseId=${caseId}`, 'new_complaint')
+    await createNotificationForRole('police', title, message, `/police-dashboard?caseId=${caseId}`, 'new_complaint', caseId)
 
     // Notify all bank users - link to bank dashboard
-    await createNotificationForRole('bank', title, message, `/bank-dashboard?caseId=${caseId}`, 'new_complaint')
+    await createNotificationForRole('bank', title, message, `/bank-dashboard?caseId=${caseId}`, 'new_complaint', caseId)
 
-    console.log('✅ Notifications sent to police and bank for new complaint')
+    console.log('✅ Notifications dispatched to police and bank for new complaint', caseId)
   } catch (error) {
     console.error('Error notifying new complaint:', error)
-    // Don't throw - we don't want to fail the complaint creation if notification fails
   }
 }
 
 /**
  * Notify victim when police updates their case
  */
-export async function notifyVictimPoliceUpdate(victimUid, caseId, updateType, details) {
+export async function notifyVictimPoliceUpdate(victimUid, caseId, updateType, details = {}, victimEmail = null) {
   try {
-    let title = 'Case Update from Police'
+    let title = '👮 Police Update on Your Case'
     let message = ''
 
     switch (updateType) {
       case 'status':
-        title = 'Case Status Updated by Police'
-        message = `Your case ${caseId} status has been updated to: ${details.status || 'Updated'}${details.note ? `. Note: ${details.note}` : ''}`
+        title = `👮 Case Status: ${details.status || 'Updated'}`
+        message = `Your case ${caseId} is now marked as "${details.status || 'Updated'}"${details.note ? `. Note: ${details.note}` : ''}`
         break
       case 'fir':
-        title = 'FIR Filed for Your Case'
-        message = `FIR has been filed for your case ${caseId}. FIR Number: ${details.firNumber || 'N/A'}`
+        title = '📋 FIR Registered by Police'
+        message = `Official FIR has been registered for your case ${caseId}. FIR Number: ${details.firNumber || 'N/A'}`
         break
       case 'investigation':
-        title = 'Bank Investigation Requested'
-        message = `Police has requested bank investigation for your case ${caseId}`
+        title = '🏦 Bank Investigation Requested'
+        message = `Police has officially requested bank investigation & fund-freeze for your case ${caseId}.`
         break
       case 'message':
-        title = 'New Message from Police'
-        message = `You have a new message from police regarding your case ${caseId}: ${details.message || 'New message received'}`
+        title = '💬 New Message from Police'
+        message = `Officer: ${details.message || 'New message regarding your complaint.'}`
         break
       case 'viewed':
-        title = 'Case Viewed by Police'
-        message = `Your case ${caseId} has been reviewed by police`
+        title = '👀 Case Under Review by Police'
+        message = `A Cyber Crime officer has opened and reviewed your case ${caseId}.`
         break
       case 'note':
-        title = 'Case Note Added by Police'
-        message = `Police has added a note to your case ${caseId}: ${details.note || 'New note added'}`
+        title = '📝 Officer Note Added'
+        message = `Police added a note to your case ${caseId}: ${details.note || 'Note added'}`
         break
       default:
-        message = `Your case ${caseId} has been updated by police`
+        message = `Your complaint ${caseId} has been updated by the police department.`
     }
 
     const link = `/dashboard?caseId=${caseId}`
-
-    await createNotification(victimUid, title, message, link, 'police_update')
-    console.log('✅ Notification sent to victim for police update')
+    await createNotification(victimUid, title, message, link, 'police_update', victimEmail, caseId)
   } catch (error) {
     console.error('Error notifying victim of police update:', error)
   }
@@ -168,38 +173,35 @@ export async function notifyVictimPoliceUpdate(victimUid, caseId, updateType, de
 /**
  * Notify victim when bank updates their case
  */
-export async function notifyVictimBankUpdate(victimUid, caseId, updateType, details) {
+export async function notifyVictimBankUpdate(victimUid, caseId, updateType, details = {}, victimEmail = null) {
   try {
-    let title = 'Case Update from Bank'
+    let title = '🏦 Bank Update on Your Case'
     let message = ''
 
     switch (updateType) {
       case 'freeze':
-        title = 'Funds Frozen by Bank'
-        message = `Bank has frozen funds for your case ${caseId}. Amount: ₹${details.amount || 'N/A'}`
+        title = '❄️ Funds Frozen by Bank'
+        message = `Bank has successfully frozen funds of ₹${Number(details.amount || 0).toLocaleString('en-IN')} for case ${caseId}.`
         break
       case 'refund':
-        title = 'Refund Processed'
-        message = `Refund has been processed for your case ${caseId}. Amount: ₹${details.amount || 'N/A'}`
+        title = '💰 Refund Processed by Bank'
+        message = `A refund of ₹${Number(details.amount || 0).toLocaleString('en-IN')} has been initiated for case ${caseId}.`
         break
       case 'status':
-        title = 'Case Status Updated by Bank'
-        message = `Your case ${caseId} status has been updated to: ${details.status || 'Updated'}${details.note ? `. Note: ${details.note}` : ''}`
+        title = `🏦 Bank Status: ${details.status || 'Updated'}`
+        message = `Bank updated case ${caseId} to "${details.status || 'Updated'}"${details.note ? `. Note: ${details.note}` : ''}`
         break
       case 'message':
-        title = 'New Message from Bank'
-        message = `You have a new message from bank regarding your case ${caseId}: ${details.message || 'New message received'}`
+        title = '💬 New Message from Bank'
+        message = `Bank Official: ${details.message || 'New message regarding your transaction.'}`
         break
       default:
-        message = `Your case ${caseId} has been updated by bank`
+        message = `Your bank has updated information on case ${caseId}.`
     }
 
     const link = `/dashboard?caseId=${caseId}`
-
-    await createNotification(victimUid, title, message, link, 'bank_update')
-    console.log('✅ Notification sent to victim for bank update')
+    await createNotification(victimUid, title, message, link, 'bank_update', victimEmail, caseId)
   } catch (error) {
     console.error('Error notifying victim of bank update:', error)
   }
 }
-

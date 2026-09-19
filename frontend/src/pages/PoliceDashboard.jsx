@@ -390,13 +390,14 @@ export default function PoliceDashboard() {
       });
 
       // Notify victim that case was viewed
-      if (currentData.victimUid) {
+      if (currentData.victimUid || currentData.victimEmail) {
         try {
           await notifyVictimPoliceUpdate(
             currentData.victimUid,
             currentData.caseId || caseDocId,
             'viewed',
-            {}
+            {},
+            currentData.victimEmail
           )
         } catch (notifError) {
           console.error('Failed to notify victim:', notifError)
@@ -459,13 +460,14 @@ export default function PoliceDashboard() {
       });
 
       // Notify victim about FIR filing
-      if (currentData.victimUid) {
+      if (currentData.victimUid || currentData.victimEmail) {
         try {
           await notifyVictimPoliceUpdate(
             currentData.victimUid,
             currentData.caseId || caseDocId,
             'fir',
-            { firNumber: firNumber.trim() }
+            { firNumber: firNumber.trim() },
+            currentData.victimEmail
           )
         } catch (notifError) {
           console.error('Failed to notify victim:', notifError)
@@ -534,13 +536,14 @@ export default function PoliceDashboard() {
       });
 
       // Notify victim about police message
-      if (currentData.victimUid) {
+      if (currentData.victimUid || currentData.victimEmail) {
         try {
           await notifyVictimPoliceUpdate(
             currentData.victimUid,
             currentData.caseId || caseDocId,
             'message',
-            { message: messageText.trim() }
+            { message: messageText.trim() },
+            currentData.victimEmail
           )
         } catch (notifError) {
           console.error('Failed to notify victim:', notifError)
@@ -593,13 +596,14 @@ export default function PoliceDashboard() {
       });
 
       // Notify victim about case note
-      if (currentData.victimUid) {
+      if (currentData.victimUid || currentData.victimEmail) {
         try {
           await notifyVictimPoliceUpdate(
             currentData.victimUid,
             currentData.caseId || caseDocId,
             'note',
-            { note: caseNote.trim() }
+            { note: caseNote.trim() },
+            currentData.victimEmail
           )
         } catch (notifError) {
           console.error('Failed to notify victim:', notifError)
@@ -668,13 +672,14 @@ export default function PoliceDashboard() {
       await updateDoc(docRef, updatePayload);
 
       // Notify victim about status update
-      if (currentData.victimUid) {
+      if (currentData.victimUid || currentData.victimEmail) {
         try {
           await notifyVictimPoliceUpdate(
             currentData.victimUid,
             currentData.caseId || caseDocId,
             'status',
-            { status, note }
+            { status, note },
+            currentData.victimEmail
           )
         } catch (notifError) {
           console.error('Failed to notify victim:', notifError)
@@ -743,13 +748,14 @@ export default function PoliceDashboard() {
       await updateDoc(docRef, updatePayload);
 
       // Notify victim about bank investigation request
-      if (currentData.victimUid) {
+      if (currentData.victimUid || currentData.victimEmail) {
         try {
           await notifyVictimPoliceUpdate(
             currentData.victimUid,
             currentData.caseId || caseDocId,
             'investigation',
-            {}
+            {},
+            currentData.victimEmail
           )
         } catch (notifError) {
           console.error('Failed to notify victim:', notifError)

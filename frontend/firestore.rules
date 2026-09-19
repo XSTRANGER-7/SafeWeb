@@ -88,17 +88,25 @@ service cloud.firestore {
     
     // Notifications collection
     match /notifications/{notificationId} {
-      // Users can read their own notifications
-      allow read: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+      // Users can read notifications addressed to their UID, email, role, or if they are police/bank
+      allow read: if isAuthenticated() && (
+        resource.data.recipientId == request.auth.uid ||
+        (resource.data.recipientEmail != null && request.auth.token.email != null && resource.data.recipientEmail == request.auth.token.email) ||
+        (resource.data.recipientRole != null && (isPoliceOrBank() || resource.data.recipientRole == getUserRole())) ||
+        isPoliceOrBank()
+      );
       
-      // System can create notifications (any authenticated user can create, but typically done by backend)
+      // System and users can create notifications
       allow create: if isAuthenticated();
       
-      // Users can update their own notifications (to mark as read)
-      allow update: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+      // Users can update notifications (e.g. mark as read)
+      allow update: if isAuthenticated();
       
-      // Only system can delete notifications
-      allow delete: if isAuthenticated() && isPoliceOrBank();
+      // Only police/bank or recipient can delete notifications
+      allow delete: if isAuthenticated() && (
+        resource.data.recipientId == request.auth.uid ||
+        isPoliceOrBank()
+      );
     }
     
     // Default: deny all other access

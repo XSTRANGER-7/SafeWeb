@@ -3,7 +3,7 @@ import { collection, query, orderBy, onSnapshot, doc, updateDoc, getDoc, getDocs
 import { db } from "../../firebase.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { notifyVictimBankUpdate } from "../utils/notifications.js";
+import { notifyVictimBankUpdate, createNotificationForRole } from "../utils/notifications.js";
 import { useI18n } from "../../i18n/index.jsx";
 
 // Component to load and display evidence files from subcollection
@@ -403,13 +403,14 @@ export default function BankDashboard() {
       });
       
       // Notify victim about bank message
-      if (currentData.victimUid) {
+      if (currentData.victimUid || currentData.victimEmail) {
         try {
           await notifyVictimBankUpdate(
             currentData.victimUid,
             currentData.caseId || caseDocId,
             'message',
-            { message: messageText.trim() }
+            { message: messageText.trim() },
+            currentData.victimEmail
           )
         } catch (notifError) {
           console.error('Failed to notify victim:', notifError)
@@ -500,17 +501,32 @@ export default function BankDashboard() {
       });
       
       // Notify victim about funds freeze
-      if (currentData.victimUid) {
+      if (currentData.victimUid || currentData.victimEmail) {
         try {
           await notifyVictimBankUpdate(
             currentData.victimUid,
             currentData.caseId || caseDoc.id,
             'freeze',
-            { amount }
+            { amount },
+            currentData.victimEmail
           )
         } catch (notifError) {
           console.error('Failed to notify victim:', notifError)
         }
+      }
+
+      // Notify police that bank has frozen funds
+      try {
+        await createNotificationForRole(
+          'police',
+          '❄️ Bank Froze Funds for Case',
+          `Bank has frozen ₹${Number(amount || 0).toLocaleString('en-IN')} for case ${currentData.caseId || caseDoc.caseId || caseDoc.id}.`,
+          `/police-dashboard?caseId=${currentData.caseId || caseDoc.caseId || caseDoc.id}`,
+          'funds_frozen',
+          currentData.caseId || caseDoc.caseId || caseDoc.id
+        )
+      } catch (policeNotifErr) {
+        console.error('Failed to notify police:', policeNotifErr)
       }
       
       // Update selected case
