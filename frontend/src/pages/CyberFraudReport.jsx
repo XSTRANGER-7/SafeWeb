@@ -607,7 +607,7 @@ export default function CyberFraudReport({ user: userProp }) {
 
       // Evidence uploads
       if (uploadFiles.length > 0) {
-        const apiUrl = import.meta.env.VITE_API_URL || 'https://safeweb-api.onrender.com';
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://51.21.251.132';
         const evidenceCollection = collection(db, 'cases', caseRef.id, 'evidence');
 
         for (const f of uploadFiles) {

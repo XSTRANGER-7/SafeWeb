@@ -294,7 +294,7 @@ export default function WhatsAppBot() {
       const audioBase64 = await base64Promise
 
       const userApiKey = localStorage.getItem('groq_api_key') || localStorage.getItem('gemini_api_key') || ''
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://51.21.251.132'
       const res = await fetch(`${apiUrl}/api/transcribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -872,7 +872,7 @@ export default function WhatsAppBot() {
       // 3. Upload evidence file if present
       if (data.evidenceFile?.data) {
         try {
-          const apiUrl = import.meta.env.VITE_API_URL || 'https://safeweb-api.onrender.com'
+          const apiUrl = import.meta.env.VITE_API_URL || 'http://51.21.251.132'
           const sanitizedName = data.evidenceFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
           const uploadRes = await fetch(`${apiUrl}/upload/file`, {
             method: 'POST',
