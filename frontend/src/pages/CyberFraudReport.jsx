@@ -134,6 +134,12 @@ export default function CyberFraudReport({ user: userProp }) {
         if (parsed.form) {
           setForm(parsed.form);
           hasRestoredData = true;
+        } else if (parsed.fullName || parsed.contactNumber || parsed.incidentType) {
+          setForm(prev => ({
+            ...prev,
+            ...parsed
+          }));
+          hasRestoredData = true;
         }
         if (parsed.currentSection) {
           setCurrentSection(parsed.currentSection);
@@ -147,6 +153,52 @@ export default function CyberFraudReport({ user: userProp }) {
           setLocationData(parsed.locationData);
           hasRestoredData = true;
         }
+
+        // Restore chatbot GPS if present
+        const savedGps = localStorage.getItem('chatbotGpsLocation');
+        if (savedGps) {
+          try {
+            const gps = JSON.parse(savedGps);
+            if (gps.latitude && gps.longitude) {
+              setLocationData(prev => ({
+                ...prev,
+                latitude: gps.latitude,
+                longitude: gps.longitude,
+                accuracy: gps.accuracy || null,
+                timestamp: new Date().toISOString()
+              }));
+              hasRestoredData = true;
+            }
+          } catch (gpsErr) {
+            console.error('Error loading chatbot GPS location:', gpsErr);
+          }
+        }
+
+        // Restore chatbot evidence file if present
+        const savedFile = localStorage.getItem('chatbotEvidenceFile');
+        if (savedFile) {
+          try {
+            const fileObj = JSON.parse(savedFile);
+            if (fileObj.data && fileObj.name) {
+              const byteCharacters = atob(fileObj.data);
+              const byteNumbers = new Array(byteCharacters.length);
+              for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+              }
+              const byteArray = new Uint8Array(byteNumbers);
+              const blob = new Blob([byteArray], { type: fileObj.type || 'application/octet-stream' });
+              const reconstructedFile = new File([blob], fileObj.name, { type: fileObj.type });
+              setFiles(prev => {
+                const alreadyExists = prev.some(f => f.name === fileObj.name && f.size === fileObj.size);
+                return alreadyExists ? prev : [...prev, reconstructedFile];
+              });
+              hasRestoredData = true;
+            }
+          } catch (fileErr) {
+            console.error('Error loading chatbot evidence file:', fileErr);
+          }
+        }
+
         if (hasRestoredData) {
           setMessage({
             type: 'success',
@@ -653,7 +705,7 @@ export default function CyberFraudReport({ user: userProp }) {
         showToast({
           type: 'success',
           title: '🎉 Complaint Submitted Successfully!',
-          // message: getComplaintSuccessMessage(caseId, evidenceMetadata.length),
+          message: getComplaintSuccessMessage(caseId, evidenceMetadata.length),
           duration: 7000
         });
       }
@@ -669,6 +721,8 @@ export default function CyberFraudReport({ user: userProp }) {
       setAadhaarOcr(AADHAAR_OCR_INITIAL_STATE);
       setCurrentSection(1);
       localStorage.removeItem('complaintFormDraft');
+      localStorage.removeItem('chatbotGpsLocation');
+      localStorage.removeItem('chatbotEvidenceFile');
 
     } catch (err) {
       console.error('Submit error:', err);

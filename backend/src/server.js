@@ -19,6 +19,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const debugRoutes = require('./routes/debugRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
+const transcribeRoutes = require('./routes/transcribeRoutes');
 
 app.use('/mock', mockRoutes);
 app.use('/admin', adminRoutes);
@@ -26,6 +27,7 @@ app.use('/upload', uploadRoutes);
 // Development-only debug endpoints (frontend posts OTP here)
 app.use('/api/debug', debugRoutes);
 app.use('/whatsapp', whatsappRoutes);
+app.use('/api/transcribe', transcribeRoutes);
 
 // Serve uploaded files statically
 app.use('/uploads', express.static('uploads'));
