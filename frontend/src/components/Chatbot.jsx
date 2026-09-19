@@ -38,7 +38,7 @@ export default function ChatBot() {
       const audioBase64 = await base64Promise;
 
       const userApiKey = localStorage.getItem("groq_api_key") || localStorage.getItem("gemini_api_key") || "";
-      const apiUrl = import.meta.env.VITE_API_URL || "http://51.21.251.132";
+      const apiUrl = import.meta.env.VITE_API_URL || "https://safe-web-pi.duckdns.org";
       const res = await fetch(`${apiUrl}/api/transcribe`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
