@@ -1,0 +1,13 @@
+{
+  "name": "safeweb-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SafeWeb - Cyber Safety & Complaint Portal",
+  "scripts": {
+    "build": "npm run build --prefix frontend",
+    "build:frontend": "npm run build --prefix frontend",
+    "dev": "npm run dev --prefix frontend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:backend": "npm run dev --prefix backend"
+  }
+}
