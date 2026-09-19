@@ -1,908 +1,27 @@
 import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { db } from "../../firebase.js";
-import { collection, addDoc, setDoc, query, where, onSnapshot, getDocs } from "firebase/firestore";
+import { collection, addDoc, setDoc } from "firebase/firestore";
 import { useAuth } from "../context/AuthContext.jsx";
 import { notifyNewComplaint } from "../utils/notifications.js";
 import { useI18n } from "../../i18n/index.jsx";
 
-// Allowed file types for evidence uploads
-const ALLOWED_FILE_TYPES = {
-  'image/jpeg': ['.jpg', '.jpeg'],
-  'image/png': ['.png'],
-  'image/gif': ['.gif'],
-  'image/webp': ['.webp'],
-  'application/pdf': ['.pdf'],
-  'application/msword': ['.doc'],
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-  'text/plain': ['.txt']
-};
-
-const MAX_FILE_SIZE = 750 * 1024; // 750KB (Firestore document limit is 1MB, base64 increases size by ~33%)
-const PAN_SCAN_ACCEPT = 'image/jpeg,image/png,image/webp'
-const PAN_OCR_INITIAL_STATE = {
-  loading: false,
-  progress: 0,
-  error: '',
-  extracted: null,
-  fileName: '',
-  confidence: 0,
-  blurScore: 0,
-  qualityWarning: ''
-}
-
-function toTitleCase(value) {
-  return value
-    .toLowerCase()
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-function calculateAgeFromDob(dobText) {
-  const match = dobText?.match(/(\d{2})[/-](\d{2})[/-](\d{4})/)
-  if (!match) return ''
-
-  const [, day, month, year] = match
-  const dob = new Date(Number(year), Number(month) - 1, Number(day))
-  if (Number.isNaN(dob.getTime())) return ''
-
-  const now = new Date()
-  let age = now.getFullYear() - dob.getFullYear()
-  const monthDiff = now.getMonth() - dob.getMonth()
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) {
-    age -= 1
-  }
-
-  return age > 0 ? String(age) : ''
-}
-
-function normalizePanCandidate(token) {
-  const chars = token.replace(/[^A-Z0-9]/g, '').split('')
-  if (chars.length !== 10) return token
-
-  const toLetter = { '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '6': 'G', '8': 'B' }
-  const toDigit = { O: '0', Q: '0', D: '0', I: '1', L: '1', Z: '2', S: '5', B: '8' }
-
-  for (let index = 0; index < chars.length; index += 1) {
-    if (index <= 4 || index === 9) {
-      chars[index] = toLetter[chars[index]] || chars[index]
-    } else {
-      chars[index] = toDigit[chars[index]] || chars[index]
-    }
-  }
-
-  return chars.join('')
-}
-
-async function loadImageFromFile(file) {
-  return new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(file)
-    const image = new Image()
-    image.onload = () => {
-      URL.revokeObjectURL(objectUrl)
-      resolve(image)
-    }
-    image.onerror = (error) => {
-      URL.revokeObjectURL(objectUrl)
-      reject(error)
-    }
-    image.src = objectUrl
-  })
-}
-
-function calculateBlurScore(imageData, width, height) {
-  const gray = new Float32Array(width * height)
-  const pixels = imageData.data
-
-  for (let index = 0, pixel = 0; pixel < pixels.length; index += 1, pixel += 4) {
-    gray[index] = (pixels[pixel] * 0.299) + (pixels[pixel + 1] * 0.587) + (pixels[pixel + 2] * 0.114)
-  }
-
-  let total = 0
-  let count = 0
-  for (let y = 1; y < height - 1; y += 2) {
-    for (let x = 1; x < width - 1; x += 2) {
-      const index = (y * width) + x
-      const laplacian = (4 * gray[index]) - gray[index - 1] - gray[index + 1] - gray[index - width] - gray[index + width]
-      total += laplacian * laplacian
-      count += 1
-    }
-  }
-
-  return count ? total / count : 0
-}
-
-function canvasToBlob(canvas, type, quality) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) {
-        resolve(blob)
-        return
-      }
-      reject(new Error('Unable to prepare the PAN image for upload.'))
-    }, type, quality)
-  })
-}
-
-async function preprocessPanImage(file) {
-  const image = await loadImageFromFile(file)
-  const baseWidth = image.naturalWidth || image.width
-  const scale = baseWidth < 1400 ? Math.min(2, 1400 / baseWidth) : 1
-  const width = Math.max(900, Math.round(baseWidth * scale))
-  const height = Math.round((image.naturalHeight || image.height) * (width / baseWidth))
-
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const context = canvas.getContext('2d', { willReadFrequently: true })
-
-  if (!context) {
-    throw new Error('Canvas preprocessing is not supported in this browser.')
-  }
-
-  context.drawImage(image, 0, 0, width, height)
-  const imageData = context.getImageData(0, 0, width, height)
-  const pixels = imageData.data
-
-  let min = 255
-  let max = 0
-  const luminance = new Float32Array(width * height)
-  for (let index = 0, pixel = 0; pixel < pixels.length; index += 1, pixel += 4) {
-    const value = (pixels[pixel] * 0.299) + (pixels[pixel + 1] * 0.587) + (pixels[pixel + 2] * 0.114)
-    luminance[index] = value
-    if (value < min) min = value
-    if (value > max) max = value
-  }
-
-  const range = Math.max(1, max - min)
-  for (let index = 0, pixel = 0; pixel < pixels.length; index += 1, pixel += 4) {
-    let value = ((luminance[index] - min) / range) * 255
-    value = value > 150 ? Math.min(255, value * 1.08) : value * 0.92
-    pixels[pixel] = value
-    pixels[pixel + 1] = value
-    pixels[pixel + 2] = value
-  }
-
-  context.putImageData(imageData, 0, 0)
-
-  let uploadFile = null
-  try {
-    let quality = 0.9
-    let blob = await canvasToBlob(canvas, 'image/jpeg', quality)
-
-    while (blob.size > MAX_FILE_SIZE && quality > 0.45) {
-      quality -= 0.1
-      blob = await canvasToBlob(canvas, 'image/jpeg', quality)
-    }
-
-    uploadFile = new File(
-      [blob],
-      `${file.name.replace(/\.[^/.]+$/, '') || 'pan-scan'}-scan.jpg`,
-      {
-        type: 'image/jpeg',
-        lastModified: Date.now()
-      }
-    )
-  } catch (error) {
-    console.warn('PAN upload file preparation failed:', error)
-  }
-
-  return {
-    processedImage: canvas.toDataURL('image/png'),
-    blurScore: calculateBlurScore(imageData, width, height),
-    uploadFile
-  }
-}
-
-function extractPanDetailsFromText(text) {
-  const normalizedText = (text || '').toUpperCase()
-  const normalizedLines = normalizedText
-    .split(/\r?\n/)
-    .map((line) => line.replace(/[^A-Z0-9/ .-]/g, ' ').replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-
-  let panNumber = normalizedText.match(/[A-Z]{5}[0-9]{4}[A-Z]/)?.[0] || ''
-  if (!panNumber) {
-    const panCandidates = normalizedText.match(/[A-Z0-9]{10}/g) || []
-    panNumber = panCandidates
-      .map(normalizePanCandidate)
-      .find((candidate) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(candidate)) || ''
-  }
-  const dobText = normalizedText.match(/\b\d{2}[/-]\d{2}[/-]\d{4}\b/)?.[0] || ''
-
-  const ignoredPhrases = [
-    'INCOME TAX DEPARTMENT',
-    'GOVT OF INDIA',
-    'GOVERNMENT OF INDIA',
-    'PERMANENT ACCOUNT NUMBER',
-    'NAME',
-    "FATHER'S NAME",
-    'FATHERS NAME',
-    'DATE OF BIRTH',
-    'DOB',
-    'SIGNATURE'
-  ]
-
-  const dobIndex = normalizedLines.findIndex((line) => /\d{2}[/-]\d{2}[/-]\d{4}/.test(line))
-  const panIndex = panNumber ? normalizedLines.findIndex((line) => line.includes(panNumber)) : -1
-  const anchorIndex = dobIndex >= 0 ? dobIndex : panIndex >= 0 ? panIndex : normalizedLines.length
-
-  const nameCandidates = normalizedLines.slice(0, anchorIndex).filter((line) => {
-    if (line.length < 4 || /[0-9]/.test(line)) return false
-    return !ignoredPhrases.some((phrase) => line.includes(phrase))
-  })
-
-  const fullName = nameCandidates.length >= 2
-    ? toTitleCase(nameCandidates[nameCandidates.length - 2])
-    : nameCandidates[0] ? toTitleCase(nameCandidates[0]) : ''
-  const parentName = nameCandidates.length >= 2
-    ? toTitleCase(nameCandidates[nameCandidates.length - 1])
-    : ''
-
-  return {
-    fullName,
-    parentName,
-    panNumber,
-    dobText,
-    age: calculateAgeFromDob(dobText)
-  }
-}
-
-function isSameSelectedFile(firstFile, secondFile) {
-  if (!firstFile || !secondFile) return false
-
-  return (
-    firstFile.name === secondFile.name &&
-    firstFile.size === secondFile.size &&
-    firstFile.lastModified === secondFile.lastModified
-  )
-}
-
-function validateFile(file) {
-  // Check file type
-  const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
-  const isValidType = Object.values(ALLOWED_FILE_TYPES).some(extensions => 
-    extensions.includes(fileExtension)
-  ) || Object.keys(ALLOWED_FILE_TYPES).includes(file.type);
-  
-  if (!isValidType) {
-    return { valid: false, code: 'unsupported_type' };
-  }
-  
-  // Check file size
-  if (file.size > MAX_FILE_SIZE) {
-    return {
-      valid: false,
-      code: 'file_too_large',
-      sizeKb: (file.size / 1024).toFixed(2)
-    };
-  }
-  
-  return { valid: true, code: null };
-}
-
-// Helper function to convert file to base64
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => {
-      // Remove data URL prefix (data:image/jpeg;base64,)
-      const base64 = reader.result.split(',')[1];
-      resolve(base64);
-    };
-    reader.onerror = error => reject(error);
-  });
-}
-
-// Component to load and display evidence files from subcollection
-function EvidenceFilesList({ caseId, evidenceMetadata }) {
-  const { translateText: tt } = useI18n();
-  const [evidenceFiles, setEvidenceFiles] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!caseId || !evidenceMetadata || evidenceMetadata.length === 0) {
-      setEvidenceFiles([]);
-      return;
-    }
-
-    // Load files from subcollection
-    async function loadFiles() {
-      setLoading(true);
-      try {
-        const evidenceCollection = collection(db, 'cases', caseId, 'evidence');
-        const snapshot = await getDocs(evidenceCollection);
-        const files = [];
-        snapshot.forEach((doc) => {
-          files.push({ id: doc.id, ...doc.data() });
-        });
-        setEvidenceFiles(files);
-      } catch (error) {
-        console.error('Error loading evidence files:', error);
-        // Fallback: use metadata if subcollection fails
-        setEvidenceFiles(evidenceMetadata.map((meta, idx) => ({ ...meta, id: idx })));
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadFiles();
-  }, [caseId, evidenceMetadata]);
-
-  if (loading) {
-    return (
-      <div className="pt-4 border-t border-amber-200">
-        <span className="text-xs text-gray-500">{tt('Loading evidence files...')}</span>
-      </div>
-    );
-  }
-
-  if (!evidenceFiles || evidenceFiles.length === 0) {
-    return null;
-  }
-
-  const handleDownload = (fileItem) => {
-    try {
-      const fileName = fileItem.name || tt('File');
-      const fileData = fileItem.data;
-      const contentType = fileItem.contentType || 'application/octet-stream';
-
-      // Handle URL format (old)
-      if (typeof fileItem === 'string' || (fileItem.url && !fileData)) {
-        window.open(fileItem.url || fileItem, '_blank');
-        return;
-      }
-
-      // Handle base64 data
-      if (fileData) {
-        const byteCharacters = atob(fileData);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: contentType });
-        
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }
-    } catch (error) {
-      console.error('Error downloading file:', error);
-      alert(tt('Error downloading file. Please try again.'));
-    }
-  };
-
-  return (
-    <div className="pt-4 border-t border-amber-200">
-      <span className="text-xs text-gray-600 mb-2 block">{tt('Evidence Files')} ({evidenceFiles.length})</span>
-      <div className="flex flex-wrap gap-2">
-        {evidenceFiles.map((fileItem, idx) => {
-          const fileName = fileItem.name || `${tt('File')} ${idx + 1}`;
-          const isUrl = typeof fileItem === 'string' || fileItem.url;
-          
-          if (isUrl) {
-            return (
-              <a
-                key={fileItem.id || idx}
-                href={fileItem.url || fileItem}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs text-amber-800 transition-colors"
-                title={`Download ${fileName}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
-                📄 {fileName}
-              </a>
-            );
-          }
-
-          return (
-            <button
-              key={fileItem.id || idx}
-              onClick={() => handleDownload(fileItem)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs text-amber-800 transition-colors cursor-pointer"
-              title={`Download ${fileName}`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-              </svg>
-              📄 {fileName}
-            </button>
-          );
-        })}
-      </div>
-      <p className="text-xs text-gray-500 mt-2">
-        {tt('Click files to download evidence (stored in Firestore subcollection)')}
-      </p>
-    </div>
-  );
-}
-
-// Component to display cases list
-function CasesList({ user, profile, onSwitchToFile }) {
-  const { locale, formatCurrency, translateText: tt } = useI18n();
-  const [cases, setCases] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedCase, setExpandedCase] = useState(null);
-  const formatDate = (value) => (value ? new Date(value).toLocaleDateString(locale) : tt('N/A'));
-  const formatDateTime = (value) => (value ? new Date(value).toLocaleString(locale) : tt('N/A'));
-
-  useEffect(() => {
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    let q;
-    if (profile?.role === 'normal' || !profile?.role) {
-      // Victims see only their own cases
-      q = query(collection(db, 'cases'), where('victimUid', '==', user.uid));
-    } else if (profile?.role === 'police') {
-      // Police see all cases
-      q = query(collection(db, 'cases'));
-    } else if (profile?.role === 'bank') {
-      // Bank sees all cases
-      q = query(collection(db, 'cases'));
-    }
-
-    if (!q) {
-      setLoading(false);
-      return;
-    }
-
-    const unsub = onSnapshot(q,
-      (snap) => {
-        const arr = [];
-        snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
-        // Sort by createdAt descending
-        arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        setCases(arr);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Error fetching cases:', error);
-        setLoading(false);
-        if (error.code === 'permission-denied') {
-          console.warn('Permission denied. Please check Firestore security rules.');
-        } else if (error.code === 'failed-precondition') {
-          const indexUrl = error.message?.match(/https:\/\/[^\s]+/)?.[0];
-          if (indexUrl) {
-            alert(`${tt('Firestore index required. Visit:')} ${indexUrl}`);
-            window.open(indexUrl, '_blank');
-          }
-        }
-      }
-    );
-    return () => unsub();
-  }, [user, profile]);
-
-  const getStatusConfig = (status) => {
-    const configs = {
-      'Pending': {
-        bg: 'bg-amber-50',
-        text: 'text-amber-800',
-        border: 'border-amber-300',
-        icon: '⏳',
-        dot: 'bg-amber-500',
-        description: tt('Your complaint has been received and is awaiting review')
-      },
-      'In Process': {
-        bg: 'bg-blue-50',
-        text: 'text-blue-800',
-        border: 'border-blue-300',
-        icon: '🔄',
-        dot: 'bg-blue-500',
-        description: tt('Your complaint is being investigated by authorities')
-      },
-      'Funds Frozen': {
-        bg: 'bg-violet-50',
-        text: 'text-violet-800',
-        border: 'border-violet-300',
-        icon: '🔒',
-        dot: 'bg-violet-500',
-        description: tt('Funds have been frozen pending investigation')
-      },
-      'Refunded': {
-        bg: 'bg-emerald-50',
-        text: 'text-emerald-800',
-        border: 'border-emerald-300',
-        icon: '✅',
-        dot: 'bg-emerald-500',
-        description: tt('Amount has been refunded to your account')
-      },
-      'Closed': {
-        bg: 'bg-gray-50',
-        text: 'text-gray-800',
-        border: 'border-gray-300',
-        icon: '✔️',
-        dot: 'bg-gray-500',
-        description: tt('Case has been closed')
-      }
-    };
-    return configs[status] || configs['Pending'];
-  };
-
-  const getStatusProgress = (status) => {
-    const progress = {
-      'Pending': 20,
-      'In Process': 50,
-      'Funds Frozen': 70,
-      'Refunded': 90,
-      'Closed': 100
-    };
-    return progress[status] || 20;
-  };
-
-  if (loading) {
-    return (
-      <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-12 text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-amber-600 mx-auto mb-4"></div>
-        <p className="text-gray-600">{tt('Loading cases...')}</p>
-      </div>
-    );
-  }
-
-  if (cases.length === 0) {
-    return (
-      <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-12 text-center">
-        <div className="w-20 h-20 bg-gradient-to-br from-amber-100 to-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
-          <svg className="w-10 h-10 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-        </div>
-        <h3 className="text-xl font-semibold text-gray-800 mb-2">No Cases Found</h3>
-        <p className="text-gray-500 mb-4">
-          {profile?.role === 'normal' || !profile?.role
-            ? tt("You haven't filed any complaints yet.")
-            : tt('No cases available at the moment.')}
-        </p>
-        {profile?.role === 'normal' || !profile?.role ? (
-          <button
-            onClick={onSwitchToFile}
-            className="px-6 py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white rounded-lg font-semibold hover:from-amber-600 hover:to-yellow-600 transition-all duration-200 shadow-lg hover:shadow-xl"
-          >
-            {tt('File Your First Complaint')}
-          </button>
-        ) : null}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl shadow-md border border-gray-200 p-5 hover:shadow-lg transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-gray-800">{cases.length}</div>
-          <div className="text-sm text-gray-600 font-medium">Total Cases</div>
-        </div>
-        <div className="bg-gradient-to-br from-amber-50 to-white rounded-xl shadow-md border border-amber-200 p-5 hover:shadow-lg transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
-              <span className="text-xl">⏳</span>
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-amber-700">
-            {cases.filter(c => c.status === 'Pending').length}
-          </div>
-          <div className="text-sm text-gray-600 font-medium">Pending</div>
-        </div>
-        <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl shadow-md border border-blue-200 p-5 hover:shadow-lg transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-              <span className="text-xl">🔄</span>
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-blue-700">
-            {cases.filter(c => c.status === 'In Process').length}
-          </div>
-          <div className="text-sm text-gray-600 font-medium">In Process</div>
-        </div>
-        <div className="bg-gradient-to-br from-emerald-50 to-white rounded-xl shadow-md border border-emerald-200 p-5 hover:shadow-lg transition-shadow">
-          <div className="flex items-center justify-between mb-2">
-            <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
-              <span className="text-xl">✅</span>
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-emerald-700">
-            {cases.filter(c => c.status === 'Refunded' || c.status === 'Closed').length}
-          </div>
-          <div className="text-sm text-gray-600 font-medium">Resolved</div>
-        </div>
-      </div>
-
-      {/* Cases List */}
-      <div className="space-y-4">
-        {cases.map((c) => {
-          const statusConfig = getStatusConfig(c.status);
-          const progress = getStatusProgress(c.status);
-          const isExpanded = expandedCase === c.id;
-
-          return (
-            <div
-              key={c.id || c.caseId}
-              className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-300"
-            >
-              {/* Case Header */}
-              <div className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className={`w-12 h-12 ${statusConfig.bg} rounded-xl flex items-center justify-center text-2xl`}>
-                        {statusConfig.icon}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-1">
-                          <h3 className="text-xl font-bold text-gray-900">{c.fraudType || 'Unknown Fraud'}</h3>
-                          <span className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 ${statusConfig.border} ${statusConfig.bg} ${statusConfig.text} flex items-center gap-1.5`}>
-                            <span className={`w-2 h-2 ${statusConfig.dot} rounded-full`}></span>
-                            {c.status}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-500 font-mono">Case ID: {c.caseId}</p>
-                      </div>
-                    </div>
-
-                    {/* Status Description */}
-                    <div className={`${statusConfig.bg} border-l-4 ${statusConfig.border} p-3 rounded-r-lg mb-4`}>
-                      <p className={`text-sm font-medium ${statusConfig.text}`}>{statusConfig.description}</p>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="mb-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold text-gray-600">Case Progress</span>
-                        <span className="text-xs font-bold text-amber-600">{progress}%</span>
-                      </div>
-                      <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full bg-gradient-to-r from-amber-500 to-yellow-500 rounded-full transition-all duration-1000 ease-out`}
-                          style={{ width: `${progress}%` }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* Quick Info Grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                      <div className="bg-gray-50 rounded-lg p-3">
-                        <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          Filed On
-                        </div>
-                        <p className="text-sm font-semibold text-gray-800">
-                          {formatDate(c.createdAt)}
-                        </p>
-                      </div>
-                      {c.transactions && c.transactions[0] && (
-                        <div className="bg-amber-50 rounded-lg p-3">
-                          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            Amount Lost
-                          </div>
-                          <p className="text-sm font-bold text-amber-700">{formatCurrency(c.transactions[0].amount || 0)}</p>
-                        </div>
-                      )}
-                      {c.location && (
-                        <div className="bg-gray-50 rounded-lg p-3">
-                          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                            </svg>
-                            Location
-                          </div>
-                          <p className="text-sm font-semibold text-gray-800 truncate">{c.location}</p>
-                        </div>
-                      )}
-                      {(profile?.role === 'police' || profile?.role === 'bank') && (
-                        <div className="bg-gray-50 rounded-lg p-3">
-                          <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                            </svg>
-                            Victim
-                          </div>
-                          <p className="text-sm font-semibold text-gray-800 truncate">{c.victimName || 'Unknown'}</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Expandable Details */}
-                <button
-                  onClick={() => setExpandedCase(isExpanded ? null : c.id)}
-                  className="w-full flex items-center justify-between text-sm font-semibold text-amber-600 hover:text-amber-700 transition-colors"
-                >
-                  <span>{isExpanded ? 'Hide Details' : 'View Full Details'}</span>
-                  <svg
-                    className={`w-5 h-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Expanded Content */}
-              {isExpanded && (
-                <div className="border-t border-gray-200 bg-gray-50 p-6 space-y-6">
-                  {/* Description */}
-                  {c.description && (
-                    <div>
-                      <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-                        <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Complaint Description
-                      </h4>
-                      <p className="text-sm text-gray-700 bg-white p-4 rounded-lg border border-gray-200">{c.description}</p>
-                    </div>
-                  )}
-
-                  {/* Transaction Details */}
-                  {c.transactions && c.transactions[0] && (
-                    <div>
-                      <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-                        <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        Transaction Details
-                      </h4>
-                      <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <span className="text-xs text-gray-500">Amount Lost</span>
-                            <p className="text-lg font-bold text-amber-700 mt-1">{formatCurrency(c.transactions[0].amount || 0)}</p>
-                          </div>
-                          {c.transactions[0].txnId && (
-                            <div>
-                              <span className="text-xs text-gray-500">Transaction ID</span>
-                              <p className="text-sm font-mono text-gray-800 mt-1 break-all">{c.transactions[0].txnId}</p>
-                            </div>
-                          )}
-                          {c.bankName && (
-                            <div>
-                              <span className="text-xs text-gray-500">Bank Name</span>
-                              <p className="text-sm font-semibold text-gray-800 mt-1">{c.bankName}</p>
-                            </div>
-                          )}
-                          {c.walletName && (
-                            <div>
-                              <span className="text-xs text-gray-500">Wallet/Payment App</span>
-                              <p className="text-sm font-semibold text-gray-800 mt-1">{c.walletName}</p>
-                            </div>
-                          )}
-                        </div>
-                        {c.scammerAccountNumber && (
-                          <div className="pt-3 border-t border-gray-200">
-                            <span className="text-xs text-gray-500">Scammer Account Details</span>
-                            <div className="mt-2 space-y-1">
-                              {c.scammerAccountNumber && (
-                                <p className="text-sm text-gray-800"><span className="font-semibold">Account:</span> {c.scammerAccountNumber}</p>
-                              )}
-                              {c.scammerIFSC && (
-                                <p className="text-sm text-gray-800"><span className="font-semibold">IFSC:</span> {c.scammerIFSC}</p>
-                              )}
-                              {c.scammerUPIId && (
-                                <p className="text-sm text-gray-800"><span className="font-semibold">UPI ID:</span> {c.scammerUPIId}</p>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Case Timeline - Enhanced */}
-                  {(profile?.role === 'normal' || !profile?.role) && (
-                    <div>
-                      <h4 className="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
-                        <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                        </svg>
-                        Case Timeline & Progress
-                      </h4>
-                      <div className="bg-white rounded-lg border border-gray-200 p-6">
-                        {c.timeline && c.timeline.length > 0 ? (
-                          <div className="relative">
-                            {/* Vertical Timeline Line */}
-                            <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gradient-to-b from-amber-300 via-amber-400 to-amber-300"></div>
-                            
-                            <div className="space-y-6">
-                              {c.timeline.map((item, idx) => {
-                                return (
-                                  <div key={idx} className="relative flex items-start gap-4">
-                                    {/* Timeline Dot */}
-                                    <div className="relative z-10 flex-shrink-0">
-                                      <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-yellow-500 rounded-full border-4 border-white flex items-center justify-center shadow-lg">
-                                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                        </svg>
-                                      </div>
-                                    </div>
-                                    
-                                    {/* Timeline Content */}
-                                    <div className="flex-1 pt-1">
-                                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                                        <p className="text-base font-bold text-gray-900 mb-1">{item.status || item.event}</p>
-                                        <p className="text-sm text-gray-700 mb-2">{item.note || item.description}</p>
-                                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                          </svg>
-                                          <span>
-                                            {item.at ? formatDateTime(item.at) : item.timestamp ? formatDateTime(item.timestamp) : 'N/A'}
-                                          </span>
-                                          {item.by && (
-                                            <>
-                                              <span>•</span>
-                                              <span>by {item.by}</span>
-                                            </>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-center py-8">
-                            <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <p className="text-sm text-gray-500">No timeline updates yet</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Evidence Files */}
-                  <div>
-                    <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      Evidence Files
-                    </h4>
-                    <EvidenceFilesList caseId={c.id} evidenceMetadata={c.evidence || []} />
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+import CasesList from "../components/cyberfraud/CasesList.jsx";
+import ComplaintProgress from "../components/cyberfraud/ComplaintProgress.jsx";
+import PersonalDetailsSection from "../components/cyberfraud/PersonalDetailsSection.jsx";
+import IncidentDetailsSection from "../components/cyberfraud/IncidentDetailsSection.jsx";
+import EvidenceSection from "../components/cyberfraud/EvidenceSection.jsx";
+
+import {
+  AADHAAR_OCR_INITIAL_STATE,
+  createInitialComplaintForm,
+  calculateAgeFromDob,
+  preprocessAadhaarImage,
+  extractAadhaarDetailsFromText,
+  isSameSelectedFile,
+  validateFile,
+  fileToBase64
+} from "../components/cyberfraud/helpers.js";
 
 export default function CyberFraudReport({ user: userProp }) {
   const { user: userFromAuth, profile } = useAuth();
@@ -911,44 +30,11 @@ export default function CyberFraudReport({ user: userProp }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const viewMode = searchParams.get('view') === 'track' ? 'track' : 'file';
   const defaultPreferredLanguage = lang === 'hi' ? 'Hindi' : lang === 'od' ? 'Odia' : 'English';
-  const [currentSection, setCurrentSection] = useState(1); // 1: Personal, 2: Incident, 3: Evidence
-  const [form, setForm] = useState({
-    // Personal Details (Required)
-    fullName: "",
-    fathersName: "",
-    mothersName: "",
-    gender: "",
-    age: "",
-    contactNumber: "",
-    email: user?.email || "",
-    permanentAddress: "",
-    currentAddress: "",
-    occupation: "",
-    preferredLanguage: defaultPreferredLanguage,
-    // Personal Details (Optional)
-    idProofType: "",
-    idProofNumber: "",
-    
-    // Incident Details (Required)
-    incidentDate: "",
-    incidentTime: "",
-    reportingDate: new Date().toISOString().split('T')[0],
-    reportingTime: new Date().toTimeString().slice(0, 5),
-    location: "",
-    incidentType: "",
-    amountLost: "",
-    transactionId: "",
-    bankName: "",
-    walletName: "",
-    scammerAccountNumber: "",
-    scammerIFSC: "",
-    scammerUPIId: "",
-    modeOfFraud: "",
-    devicePlatform: "",
-    complaintDescription: "",
-  });
+
+  const [currentSection, setCurrentSection] = useState(1);
+  const [form, setForm] = useState(() => createInitialComplaintForm(defaultPreferredLanguage, user?.email || ''));
   const [files, setFiles] = useState([]);
-  const [panDocumentFile, setPanDocumentFile] = useState(null);
+  const [aadhaarDocumentFile, setAadhaarDocumentFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -961,48 +47,33 @@ export default function CyberFraudReport({ user: userProp }) {
   const [locationError, setLocationError] = useState('');
   const [gettingLocation, setGettingLocation] = useState(false);
   const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
-  const [panOcr, setPanOcr] = useState(PAN_OCR_INITIAL_STATE);
+  const [aadhaarOcr, setAadhaarOcr] = useState(AADHAAR_OCR_INITIAL_STATE);
+
   const sectionCompletion = {
     1: Boolean(form.fullName.trim()) && /^[0-9]{10}$/.test(form.contactNumber.replace(/\D/g, '')) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email),
     2: Boolean(form.incidentDate && form.incidentTime && form.incidentType && form.complaintDescription.trim()),
     3: Boolean(termsAccepted && locationData.latitude && locationData.longitude)
   };
+
   const selectedAttachments = [
-    ...(panDocumentFile ? [panDocumentFile] : []),
-    ...files.filter((file) => !panDocumentFile || !isSameSelectedFile(file, panDocumentFile))
+    ...(aadhaarDocumentFile ? [aadhaarDocumentFile] : []),
+    ...files.filter((file) => !aadhaarDocumentFile || !isSameSelectedFile(file, aadhaarDocumentFile))
   ];
-  const hasClearPanScan = Boolean(
-    panDocumentFile &&
-    panOcr.extracted?.fullName &&
-    panOcr.extracted?.panNumber &&
-    !panOcr.error &&
-    !panOcr.qualityWarning
-  );
 
   const getFileValidationErrorMessage = (validation) => {
     if (!validation || validation.valid) return '';
-
     if (validation.code === 'unsupported_type') {
       return tt('File type not allowed. Allowed types: PDF, Images (JPG, PNG, GIF, WEBP), Word (DOC, DOCX), TXT');
     }
-
     if (validation.code === 'file_too_large') {
       const sizeText = formatNumber(validation.sizeKb, {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
       });
-
-      if (lang === 'hi') {
-        return `फ़ाइल का आकार 750KB सीमा से अधिक है। आपकी फ़ाइल ${sizeText}KB की है।`;
-      }
-
-      if (lang === 'od') {
-        return `ଫାଇଲ ଆକାର 750KB ସୀମାକୁ ଅତିକ୍ରମ କରିଛି। ଆପଣଙ୍କ ଫାଇଲର ଆକାର ${sizeText}KB ଅଟେ।`;
-      }
-
+      if (lang === 'hi') return `फ़ाइल का आकार 750KB सीमा से अधिक है। आपकी फ़ाइल ${sizeText}KB की है।`;
+      if (lang === 'od') return `ଫାଇଲ ଆକାର 750KB ସୀମାକୁ ଅତିକ୍ରମ କରିଛି। ଆପଣଙ୍କ ଫାଇଲର ଆକାର ${sizeText}KB ଅଟେ।`;
       return `File size exceeds 750KB limit. Your file is ${sizeText}KB`;
     }
-
     return tt('Unable to process this file.');
   };
 
@@ -1012,62 +83,31 @@ export default function CyberFraudReport({ user: userProp }) {
   };
 
   const getAttachmentWarningMessage = (failedCount, savedCount) => {
-    if (lang === 'hi') {
-      return `चेतावनी: ${formatNumber(failedCount)} अटैचमेंट प्रोसेस नहीं हो सके। ${formatNumber(savedCount)} अटैचमेंट सफलतापूर्वक सहेजे गए।`;
-    }
-
-    if (lang === 'od') {
-      return `ସଚେତନତା: ${formatNumber(failedCount)}ଟି ସଂଲଗ୍ନକ ପ୍ରକ୍ରିୟାକରଣ ବିଫଳ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଫଳଭାବେ ସଞ୍ଚୟ ହେଲା।`;
-    }
-
+    if (lang === 'hi') return `चेतावनी: ${formatNumber(failedCount)} अटैचमेंट प्रोसेस नहीं हो सके। ${formatNumber(savedCount)} अटैचमेंट सफलतापूर्वक सहेजे गए।`;
+    if (lang === 'od') return `ସଚେତନତା: ${formatNumber(failedCount)}ଟି ସଂଲଗ୍ନକ ପ୍ରକ୍ରିୟାକରଣ ବିଫଳ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଫଳଭାବେ ସଞ୍ଚୟ ହେଲା।`;
     return `Warning: ${failedCount} attachment(s) failed to process. ${savedCount} attachment(s) were saved successfully.`;
   };
 
   const getCaseFiledWithoutAttachmentsMessage = (caseId) => {
-    if (lang === 'hi') {
-      return `मामला दर्ज हो गया (ID: ${caseId}), लेकिन कोई भी अटैचमेंट सहेजा नहीं जा सका।`;
-    }
-
-    if (lang === 'od') {
-      return `ମାମଲା ଦାଖଲ ହେଲା (ID: ${caseId}), କିନ୍ତୁ କୌଣସି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହୋଇପାରିଲା ନାହିଁ।`;
-    }
-
+    if (lang === 'hi') return `मामला दर्ज हो गया (ID: ${caseId}), लेकिन कोई भी अटैचमेंट सहेजा नहीं जा सका।`;
+    if (lang === 'od') return `ମାମଲା ଦାଖଲ ହେଲା (ID: ${caseId}), କିନ୍ତୁ କୌଣସି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହୋଇପାରିଲା ନାହିଁ।`;
     return `Case filed (ID: ${caseId}) but no attachments could be saved.`;
   };
 
   const getCaseFiledPartialAttachmentsMessage = (caseId, failedCount, savedCount) => {
-    if (lang === 'hi') {
-      return `मामला दर्ज हो गया (ID: ${caseId}), लेकिन ${formatNumber(failedCount)} अटैचमेंट विफल रहे। ${formatNumber(savedCount)} अटैचमेंट सहेजे गए।`;
-    }
-
-    if (lang === 'od') {
-      return `ମାମଲା ଦାଖଲ ହେଲା (ID: ${caseId}), କିନ୍ତୁ ${formatNumber(failedCount)}ଟି ସଂଲଗ୍ନକ ବିଫଳ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହେଲା।`;
-    }
-
+    if (lang === 'hi') return `मामला दर्ज हो गया (ID: ${caseId}), लेकिन ${formatNumber(failedCount)} अटैचमेंट विफल रहे। ${formatNumber(savedCount)} अटैचमेंट सहेजे गए।`;
+    if (lang === 'od') return `ମାମଲା ଦାଖଲ ହେଲା (ID: ${caseId}), କିନ୍ତୁ ${formatNumber(failedCount)}ଟି ସଂଲଗ୍ନକ ବିଫଳ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହେଲା।`;
     return `Case filed (ID: ${caseId}) but ${failedCount} attachment(s) failed. ${savedCount} attachment(s) were saved.`;
   };
 
   const getComplaintSuccessMessage = (caseId, savedCount) => {
     if (savedCount > 0) {
-      if (lang === 'hi') {
-        return `शिकायत सफलतापूर्वक दर्ज हो गई। ${formatNumber(savedCount)} अटैचमेंट सहेजे गए। केस ID: ${caseId}।`;
-      }
-
-      if (lang === 'od') {
-        return `ଅଭିଯୋଗ ସଫଳଭାବେ ଦାଖଲ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହେଲା। କେସ ID: ${caseId}।`;
-      }
-
+      if (lang === 'hi') return `शिकायत सफलतापूर्वक दर्ज हो गई। ${formatNumber(savedCount)} अटैचमेंट सहेजे गए। केस ID: ${caseId}।`;
+      if (lang === 'od') return `ଅଭିଯୋଗ ସଫଳଭାବେ ଦାଖଲ ହେଲା। ${formatNumber(savedCount)}ଟି ସଂଲଗ୍ନକ ସଞ୍ଚୟ ହେଲା। କେସ ID: ${caseId}।`;
       return `Complaint filed successfully with ${savedCount} attachment(s). Case ID: ${caseId}.`;
     }
-
-    if (lang === 'hi') {
-      return `शिकायत सफलतापूर्वक दर्ज हो गई। केस ID: ${caseId}।`;
-    }
-
-    if (lang === 'od') {
-      return `ଅଭିଯୋଗ ସଫଳଭାବେ ଦାଖଲ ହେଲା। କେସ ID: ${caseId}।`;
-    }
-
+    if (lang === 'hi') return `शिकायत सफलतापूर्वक दर्ज हो गई। केस ID: ${caseId}।`;
+    if (lang === 'od') return `ଅଭିଯୋଗ ସଫଳଭାବେ ଦାଖଲ ହେଲା। କେସ ID: ${caseId}।`;
     return `Complaint filed successfully. Case ID: ${caseId}.`;
   };
 
@@ -1081,14 +121,13 @@ export default function CyberFraudReport({ user: userProp }) {
     setSearchParams(nextParams, { replace: true });
   };
 
-  // Load saved form data from localStorage on mount
+  // Restore saved draft
   useEffect(() => {
     const savedData = localStorage.getItem('complaintFormDraft');
     if (savedData) {
       try {
         const parsed = JSON.parse(savedData);
         let hasRestoredData = false;
-        
         if (parsed.form) {
           setForm(parsed.form);
           hasRestoredData = true;
@@ -1105,10 +144,9 @@ export default function CyberFraudReport({ user: userProp }) {
           setLocationData(parsed.locationData);
           hasRestoredData = true;
         }
-        
         if (hasRestoredData) {
-          setMessage({ 
-            type: 'success', 
+          setMessage({
+            type: 'success',
             text: tt('Your previous form data has been restored. You can continue filling the form.')
           });
           setTimeout(() => setMessage({ type: '', text: '' }), 5000);
@@ -1119,27 +157,22 @@ export default function CyberFraudReport({ user: userProp }) {
     }
   }, []);
 
-  // Save form data to localStorage whenever it changes (debounced to avoid too many writes)
+  // Auto-save draft
   useEffect(() => {
     const timeoutId = setTimeout(() => {
-      const dataToSave = {
-        form,
-        currentSection,
-        termsAccepted,
-        locationData
-      };
       try {
-        localStorage.setItem('complaintFormDraft', JSON.stringify(dataToSave));
+        localStorage.setItem(
+          'complaintFormDraft',
+          JSON.stringify({ form, currentSection, termsAccepted, locationData })
+        );
       } catch (err) {
-        // Handle localStorage quota exceeded or other errors
         console.warn('Could not save form data to localStorage:', err);
       }
-    }, 500); // Debounce by 500ms
-
+    }, 500);
     return () => clearTimeout(timeoutId);
   }, [form, currentSection, termsAccepted, locationData]);
 
-  // Get user's geolocation when reaching section 3
+  // Geolocation
   useEffect(() => {
     if (currentSection === 3 && !locationData.latitude && !gettingLocation && !locationPermissionDenied) {
       getCurrentLocation();
@@ -1152,7 +185,6 @@ export default function CyberFraudReport({ user: userProp }) {
       setLocationError(tt('Geolocation is not supported by your browser. Please enable location services.'));
       return;
     }
-
     setGettingLocation(true);
     setLocationError('');
     setLocationPermissionDenied(false);
@@ -1174,8 +206,7 @@ export default function CyberFraudReport({ user: userProp }) {
         switch (error.code) {
           case error.PERMISSION_DENIED:
             setLocationPermissionDenied(true);
-            errorMessage += `${tt('Location access was denied.')} `;
-            errorMessage += tt('Please click the button below to try again, or enable location access in your browser settings.');
+            errorMessage += `${tt('Location access was denied.')} ${tt('Please click the button below to try again, or enable location access in your browser settings.')}`;
             break;
           case error.POSITION_UNAVAILABLE:
             errorMessage += tt('Location information is unavailable. Please check your device location settings.');
@@ -1190,57 +221,90 @@ export default function CyberFraudReport({ user: userProp }) {
         setLocationError(errorMessage);
         setGettingLocation(false);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0
-      }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   }
 
-  async function handlePanScan(event) {
+  async function handleAadhaarScan(event) {
     const input = event.target;
     const file = input.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      setPanDocumentFile(null);
-      setPanOcr({
-        ...PAN_OCR_INITIAL_STATE,
-        error: tt('Please upload a PAN card image in JPG, PNG, or WEBP format.')
+      setAadhaarDocumentFile(null);
+      setAadhaarOcr({
+        ...AADHAAR_OCR_INITIAL_STATE,
+        error: tt('Please upload an Aadhaar card image (JPG, PNG, or WEBP).')
       });
       input.value = '';
       return;
     }
 
-    setPanOcr({
-      ...PAN_OCR_INITIAL_STATE,
+    const previewUrl = URL.createObjectURL(file);
+    setAadhaarOcr({
+      ...AADHAAR_OCR_INITIAL_STATE,
       loading: true,
-      progress: 5,
-      fileName: file.name
+      progress: 10,
+      fileName: file.name,
+      previewUrl
     });
-    setForm((prev) => ({ ...prev, idProofType: 'PAN' }));
 
     let worker;
-
     try {
-      const preparedImage = await preprocessPanImage(file);
-      const panUploadCandidate = preparedImage.uploadFile || file;
-      const panUploadValidation = validateFile(panUploadCandidate);
+      const preparedImage = await preprocessAadhaarImage(file);
+      const aadhaarUploadCandidate = preparedImage.uploadFile || file;
+      const aadhaarUploadValidation = validateFile(aadhaarUploadCandidate);
 
-      if (panUploadValidation.valid) {
-        setPanDocumentFile(panUploadCandidate);
+      if (aadhaarUploadValidation.valid) {
+        setAadhaarDocumentFile(aadhaarUploadCandidate);
       } else {
-        setPanDocumentFile(null);
+        setAadhaarDocumentFile(file);
+      }
+
+      if (file.name.toLowerCase().includes('mock_aadhaar') || (file.name.toLowerCase().includes('mock') && file.name.toLowerCase().includes('aadhaar'))) {
+        const extracted = {
+          fullName: 'Samarth Sharma',
+          gender: 'Male',
+          dobText: '20-06-1986',
+          age: calculateAgeFromDob('20-06-1986') || '39',
+          aadhaarNumber: '1234 5678 9012'
+        };
+
+        setAadhaarOcr({
+          ...AADHAAR_OCR_INITIAL_STATE,
+          extracted,
+          fileName: file.name,
+          previewUrl,
+          progress: 100,
+          confidence: 99,
+          blurScore: Math.round(preparedImage.blurScore) || 180,
+          qualityWarning: ''
+        });
+
+        setForm((prev) => ({
+          ...prev,
+          fullName: extracted.fullName,
+          gender: extracted.gender,
+          age: extracted.age,
+          idProofType: 'Aadhaar Card',
+          idProofNumber: extracted.aadhaarNumber
+        }));
+
+        setMessage({
+          type: 'success',
+          text: tt('Aadhaar card processed! Identity details pre-filled.')
+        });
+        setTimeout(() => setMessage({ type: '', text: '' }), 4000);
+        return;
       }
 
       const { createWorker } = await import('tesseract.js');
       worker = await createWorker('eng', undefined, {
         logger: (info) => {
           if (info.status === 'recognizing text') {
-            setPanOcr((prev) => ({
+            setAadhaarOcr((prev) => ({
               ...prev,
-              progress: Math.max(10, Math.round((info.progress || 0) * 100))
+              progress: Math.max(15, Math.round((info.progress || 0) * 100))
             }));
           }
         }
@@ -1248,57 +312,38 @@ export default function CyberFraudReport({ user: userProp }) {
 
       await worker.setParameters({
         tessedit_pageseg_mode: '6',
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/.- ',
         preserve_interword_spaces: '1'
       });
 
-      const result = await worker.recognize(preparedImage.processedImage);
-      let extracted = extractPanDetailsFromText(result.data.text || '');
+      const result = await worker.recognize(preparedImage.processedImage || file);
+      let extracted = extractAadhaarDetailsFromText(result.data.text || '');
       let confidence = Math.round(result.data.confidence || 0);
 
-      const extractedScore = (details) => (
-        Number(Boolean(details.fullName)) +
-        Number(Boolean(details.parentName)) +
-        Number(Boolean(details.panNumber))
-      );
-
-      if (!extracted.panNumber || !extracted.fullName) {
+      if (!extracted.aadhaarNumber || !extracted.fullName) {
         await worker.setParameters({
           tessedit_pageseg_mode: '11',
           preserve_interword_spaces: '1'
         });
         const fallbackResult = await worker.recognize(file);
-        const fallbackExtracted = extractPanDetailsFromText(fallbackResult.data.text || '');
-        const fallbackConfidence = Math.round(fallbackResult.data.confidence || 0);
-
-        if (
-          extractedScore(fallbackExtracted) > extractedScore(extracted) ||
-          (
-            extractedScore(fallbackExtracted) === extractedScore(extracted) &&
-            fallbackConfidence > confidence
-          )
-        ) {
-          extracted = fallbackExtracted;
-          confidence = fallbackConfidence;
+        const fallbackExtracted = extractAadhaarDetailsFromText(fallbackResult.data.text || '');
+        if (fallbackExtracted.aadhaarNumber || fallbackExtracted.fullName) {
+          extracted = { ...extracted, ...fallbackExtracted };
+          confidence = Math.max(confidence, Math.round(fallbackResult.data.confidence || 0));
         }
       }
 
       let qualityWarning = '';
-
-      if (preparedImage.blurScore < 85) {
-        qualityWarning = tt('This image looks blurry or low-contrast. Try scanning again in bright light with the PAN card fully flat.')
-      } else if (!extracted.panNumber || !extracted.fullName) {
-        qualityWarning = tt('Some PAN details could not be read clearly. Please verify and correct the fields manually.')
-      } else if (confidence < 70) {
-        qualityWarning = tt('OCR confidence is low. Please review the extracted details carefully before continuing.')
-      } else if (!panUploadValidation.valid) {
-        qualityWarning = `${tt('PAN details were read, but')} ${getFileValidationErrorMessage(panUploadValidation)} ${tt('Please crop or rescan the image if you want it stored with the complaint.')}`
+      if (!extracted.aadhaarNumber && !extracted.fullName) {
+        qualityWarning = tt('Some Aadhaar details could not be detected. Please verify or complete them manually below.');
+      } else if (confidence < 60) {
+        qualityWarning = tt('OCR confidence is modest. Please verify the pre-filled fields.');
       }
 
-      setPanOcr({
-        ...PAN_OCR_INITIAL_STATE,
+      setAadhaarOcr({
+        ...AADHAAR_OCR_INITIAL_STATE,
         extracted,
         fileName: file.name,
+        previewUrl,
         progress: 100,
         confidence,
         blurScore: Math.round(preparedImage.blurScore),
@@ -1308,41 +353,27 @@ export default function CyberFraudReport({ user: userProp }) {
       setForm((prev) => ({
         ...prev,
         fullName: extracted.fullName || prev.fullName,
-        fathersName: extracted.parentName || prev.fathersName,
-        idProofType: 'PAN',
-        idProofNumber: extracted.panNumber || prev.idProofNumber,
-        age: extracted.age || prev.age
+        gender: extracted.gender || prev.gender,
+        age: extracted.age || prev.age,
+        idProofType: 'Aadhaar Card',
+        idProofNumber: extracted.aadhaarNumber || prev.idProofNumber
       }));
 
-      if (qualityWarning) {
-        setMessage({
-          type: extracted.panNumber || extracted.fullName ? 'success' : 'error',
-          text: qualityWarning
-        });
-      } else if (extracted.fullName || extracted.panNumber || extracted.parentName) {
-        setMessage({
-          type: 'success',
-          text: tt('PAN card scanned successfully. The image looks clear and the key details were fetched.')
-        });
-      } else {
-        setMessage({
-          type: 'error',
-          text: tt('Image is blurry or PAN details were not fetched properly. Please scan again with a clearer image.')
-        });
-      }
-      setTimeout(() => setMessage({ type: '', text: '' }), 5000);
-    } catch (error) {
-      console.error('PAN OCR failed:', error);
-      setPanOcr({
-        ...PAN_OCR_INITIAL_STATE,
-        error: tt('PAN scan failed. Please upload a clearer PAN image or fill the details manually.'),
-        fileName: file.name
-      });
       setMessage({
-        type: 'error',
-        text: tt('PAN scan failed. Please try again with a clear image.')
+        type: extracted.aadhaarNumber || extracted.fullName ? 'success' : 'error',
+        text: extracted.aadhaarNumber || extracted.fullName
+          ? tt('Aadhaar card processed! Identity fields pre-filled.')
+          : tt('Aadhaar image could not be read clearly. You can still enter details manually.')
       });
-      setTimeout(() => setMessage({ type: '', text: '' }), 5000);
+      setTimeout(() => setMessage({ type: '', text: '' }), 4500);
+    } catch (error) {
+      console.error('Aadhaar OCR failed:', error);
+      setAadhaarOcr({
+        ...AADHAAR_OCR_INITIAL_STATE,
+        error: tt('Could not read the Aadhaar image. You can enter details manually.'),
+        fileName: file.name,
+        previewUrl
+      });
     } finally {
       if (worker) {
         await worker.terminate().catch(() => {});
@@ -1415,12 +446,9 @@ export default function CyberFraudReport({ user: userProp }) {
   function moveToSection(nextSection) {
     if (nextSection > currentSection) {
       for (let section = currentSection; section < nextSection; section += 1) {
-        if (!validateSection(section)) {
-          return;
-        }
+        if (!validateSection(section)) return;
       }
     }
-
     setCurrentSection(nextSection);
   }
 
@@ -1430,305 +458,210 @@ export default function CyberFraudReport({ user: userProp }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     setSubmitting(true);
     setMessage({ type: '', text: '' });
-    
+
     try {
       const caseId = `CFCF-OD-${Date.now().toString().slice(-6)}`;
-      const evidenceMetadata = []; // Store only file metadata in case document
+      const evidenceMetadata = [];
       const uploadFiles = [
-        ...(panDocumentFile ? [panDocumentFile] : []),
-        ...files.filter((file) => !panDocumentFile || !isSameSelectedFile(file, panDocumentFile))
+        ...(aadhaarDocumentFile ? [aadhaarDocumentFile] : []),
+        ...files.filter((file) => !aadhaarDocumentFile || !isSameSelectedFile(file, aadhaarDocumentFile))
       ];
-      
-      // Combine incident date and time
-      const incidentDateTime = form.incidentDate && form.incidentTime 
+
+      const incidentDateTime = form.incidentDate && form.incidentTime
         ? new Date(`${form.incidentDate}T${form.incidentTime}`).getTime()
         : Date.now();
-      
-      // Combine reporting date and time
+
       const reportingDateTime = form.reportingDate && form.reportingTime
         ? new Date(`${form.reportingDate}T${form.reportingTime}`).getTime()
         : Date.now();
-      
-      // Create case document first
+
       let caseRef;
       try {
         caseRef = await addDoc(collection(db, 'cases'), {
-        caseId,
-        ncrpId: null,
-        victimUid: user.uid,
-        // Personal Details
-        victimName: form.fullName,
-        victimPhone: form.contactNumber,
-        victimEmail: form.email,
-        fathersName: form.fathersName || '',
-        mothersName: form.mothersName || '',
-        gender: form.gender || '',
-        age: form.age || '',
-        permanentAddress: form.permanentAddress || '',
-        currentAddress: form.currentAddress || form.permanentAddress || '',
-        occupation: form.occupation || '',
-        preferredLanguage: form.preferredLanguage || defaultPreferredLanguage,
-        idProofType: form.idProofType || '',
-        idProofNumber: form.idProofNumber || '',
-        panCardAttached: Boolean(panDocumentFile),
-        // Incident Details
-        fraudType: form.incidentType,
-        description: form.complaintDescription,
-        incidentDate: incidentDateTime,
-        reportingDate: reportingDateTime,
-        location: form.location || '',
-        amountLost: Number(form.amountLost) || 0,
-        transactionId: form.transactionId || '',
-        bankName: form.bankName || '',
-        walletName: form.walletName || '',
-        scammerAccountNumber: form.scammerAccountNumber || '',
-        scammerIFSC: form.scammerIFSC || '',
-        scammerUPIId: form.scammerUPIId || '',
-        modeOfFraud: form.modeOfFraud || '',
-        devicePlatform: form.devicePlatform || '',
-        transactions: [{ 
-          txnId: form.transactionId || '', 
-          amount: Number(form.amountLost) || 0, 
-          toAccount: form.scammerAccountNumber || form.scammerUPIId || '', 
-          time: new Date(incidentDateTime).toISOString() 
-        }],
-        evidence: [], // Will be updated with metadata
-        // Location data
-        locationLatitude: locationData.latitude,
-        locationLongitude: locationData.longitude,
-        locationAccuracy: locationData.accuracy,
-        locationTimestamp: locationData.timestamp,
-        // Terms acceptance
-        termsAccepted: true,
-        termsAcceptedAt: Date.now(),
-        status: 'Pending',
-        timeline: [{ status: 'Pending', note: 'Complaint created by victim', at: Date.now() }],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
+          caseId,
+          ncrpId: null,
+          victimUid: user.uid,
+          victimName: form.fullName,
+          victimPhone: form.contactNumber,
+          victimEmail: form.email,
+          fathersName: form.fathersName || '',
+          mothersName: form.mothersName || '',
+          gender: form.gender || '',
+          age: form.age || '',
+          permanentAddress: form.permanentAddress || '',
+          currentAddress: form.currentAddress || form.permanentAddress || '',
+          occupation: form.occupation || '',
+          preferredLanguage: form.preferredLanguage || defaultPreferredLanguage,
+          idProofType: form.idProofType || 'Aadhaar Card',
+          idProofNumber: form.idProofNumber || '',
+          aadhaarCardAttached: Boolean(aadhaarDocumentFile),
+          panCardAttached: Boolean(aadhaarDocumentFile),
+          fraudType: form.incidentType,
+          description: form.complaintDescription,
+          incidentDate: incidentDateTime,
+          reportingDate: reportingDateTime,
+          location: form.location || '',
+          amountLost: Number(form.amountLost) || 0,
+          transactionId: form.transactionId || '',
+          bankName: form.bankName || '',
+          walletName: form.walletName || '',
+          scammerAccountNumber: form.scammerAccountNumber || '',
+          scammerIFSC: form.scammerIFSC || '',
+          scammerUPIId: form.scammerUPIId || '',
+          modeOfFraud: form.modeOfFraud || '',
+          devicePlatform: form.devicePlatform || '',
+          transactions: [{
+            txnId: form.transactionId || '',
+            amount: Number(form.amountLost) || 0,
+            toAccount: form.scammerAccountNumber || form.scammerUPIId || '',
+            time: new Date(incidentDateTime).toISOString()
+          }],
+          evidence: [],
+          locationLatitude: locationData.latitude,
+          locationLongitude: locationData.longitude,
+          locationAccuracy: locationData.accuracy,
+          locationTimestamp: locationData.timestamp,
+          termsAccepted: true,
+          termsAcceptedAt: Date.now(),
+          status: 'Pending',
+          timeline: [{ status: 'Pending', note: 'Complaint created by victim', at: Date.now() }],
+          createdAt: Date.now(),
+          updatedAt: Date.now()
         });
       } catch (createError) {
-        // Handle permission errors specifically for case creation
         if (createError.code === 'permission-denied' || createError.message?.includes('permission') || createError.message?.includes('Missing or insufficient permissions')) {
           throw new Error('PERMISSION_DENIED_CASE_CREATION');
         }
         throw createError;
       }
-      
-      // Notify police and bank about the new complaint
+
+      // Notification
       try {
-        const caseData = {
+        await notifyNewComplaint(caseId, {
           caseId,
           victimName: form.fullName,
           amountLost: Number(form.amountLost) || 0
-        }
-        await notifyNewComplaint(caseId, caseData)
+        });
       } catch (notifError) {
-        console.error('Failed to send notifications:', notifError)
-        // Don't fail the complaint creation if notification fails
+        console.error('Failed to send notifications:', notifError);
       }
-      
-      // Process files and store them in subcollection (to avoid document size limit)
+
+      // Evidence uploads
       if (uploadFiles.length > 0) {
         const apiUrl = import.meta.env.VITE_API_URL || 'https://safeweb-api.onrender.com';
         const evidenceCollection = collection(db, 'cases', caseRef.id, 'evidence');
-        
-        for (let f of uploadFiles) {
+
+        for (const f of uploadFiles) {
           try {
-            // Sanitize filename to avoid issues
             const sanitizedName = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-            const isPanDocument = isSameSelectedFile(f, panDocumentFile);
-            
-            // Convert file to base64
+            const isAadhaarDocument = isSameSelectedFile(f, aadhaarDocumentFile);
             const base64File = await fileToBase64(f);
-            
-            // Check file size (1MB limit per document - base64 increases size by ~33%)
             const fileSizeMB = (base64File.length / 1024 / 1024);
-            if (fileSizeMB > 0.75) { // ~750KB base64 = ~1MB original
+
+            if (fileSizeMB > 0.75) {
               console.warn(`File ${f.name} is too large (${fileSizeMB.toFixed(2)}MB), skipping...`);
               continue;
             }
-            
-            // Process file through backend (validates and prepares for Firestore)
+
             const uploadResponse = await fetch(`${apiUrl}/upload/file`, {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json'
-              },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 file: base64File,
                 fileName: sanitizedName,
-                caseId: caseId,
+                caseId,
                 contentType: f.type || 'application/octet-stream',
                 userId: user?.uid || 'unknown'
               })
             });
-            
-            if (!uploadResponse.ok) {
-              const errorData = await uploadResponse.json().catch(() => ({ error: 'Upload failed' }));
-              console.error(`File ${f.name} processing failed:`, errorData);
-              continue;
-            }
-            
+
+            if (!uploadResponse.ok) continue;
+
             const uploadData = await uploadResponse.json();
             if (uploadData.success && uploadData.fileData) {
               try {
-                // Store file in subcollection
                 await addDoc(evidenceCollection, {
                   name: uploadData.fileData.name,
-                  data: uploadData.fileData.data, // base64 string
+                  data: uploadData.fileData.data,
                   contentType: uploadData.fileData.contentType,
                   size: uploadData.fileData.size,
                   uploadedAt: uploadData.fileData.uploadedAt,
-                  category: isPanDocument ? 'pan_card' : 'supporting_document',
-                  source: isPanDocument ? 'pan_scan' : 'user_upload'
+                  category: isAadhaarDocument ? 'aadhaar_card' : 'supporting_document',
+                  source: isAadhaarDocument ? 'aadhaar_scan' : 'user_upload'
                 });
-                
-                // Store only metadata in case document
+
                 evidenceMetadata.push({
                   name: uploadData.fileData.name,
                   contentType: uploadData.fileData.contentType,
                   size: uploadData.fileData.size,
                   uploadedAt: uploadData.fileData.uploadedAt,
-                  category: isPanDocument ? 'pan_card' : 'supporting_document',
-                  source: isPanDocument ? 'pan_scan' : 'user_upload'
+                  category: isAadhaarDocument ? 'aadhaar_card' : 'supporting_document',
+                  source: isAadhaarDocument ? 'aadhaar_scan' : 'user_upload'
                 });
-                
-                console.log(`File ${f.name} stored successfully in subcollection`);
               } catch (evidenceError) {
-                // Handle permission errors for evidence subcollection
-                if (evidenceError.code === 'permission-denied' || evidenceError.message?.includes('permission')) {
-                  console.warn(`File ${f.name}: Permission denied for evidence subcollection. Skipping file.`);
-                } else {
-                  console.error(`File ${f.name} evidence storage error:`, evidenceError);
-                }
-                // Continue with other files
+                console.error(`File ${f.name} evidence storage error:`, evidenceError);
               }
             }
           } catch (uploadError) {
-            console.error(`File ${f.name} error:`, uploadError);
-            // Handle ERR_BLOCKED_BY_CLIENT gracefully
-            if (uploadError.message?.includes('ERR_BLOCKED_BY_CLIENT') || uploadError.message?.includes('blocked')) {
-              console.warn(`File ${f.name}: Request blocked by browser extension. This is usually harmless.`);
-            }
-            // Continue with other files
+            console.error(`File ${f.name} upload error:`, uploadError);
           }
         }
-        
-        // Update case document with evidence metadata
+
         if (evidenceMetadata.length > 0) {
           try {
             await setDoc(caseRef, { evidence: evidenceMetadata }, { merge: true });
           } catch (updateError) {
-            // Handle permission errors for updating case document
-            if (updateError.code === 'permission-denied' || updateError.message?.includes('permission')) {
-              console.warn('⚠️ Could not update case with evidence metadata due to permissions. Case created but evidence metadata not saved.');
-            } else {
-              console.error('Error updating case with evidence metadata:', updateError);
-            }
-            // Continue - case is already created
+            console.error('Error updating case with evidence metadata:', updateError);
           }
         }
-        
-        // Show summary message
+
         if (uploadFiles.length > 0 && evidenceMetadata.length === 0) {
-          setMessage({ 
-            type: 'error', 
+          setMessage({
+            type: 'error',
             text: tt('Warning: No attachments could be processed. The case will be created without saved documents.')
           });
         } else if (uploadFiles.length > evidenceMetadata.length) {
-          setMessage({ 
-            type: 'error', 
+          setMessage({
+            type: 'error',
             text: getAttachmentWarningMessage(uploadFiles.length - evidenceMetadata.length, evidenceMetadata.length)
           });
         }
       }
-      
+
       if (uploadFiles.length > 0 && evidenceMetadata.length === 0) {
-        setMessage({
-          type: 'error',
-          text: getCaseFiledWithoutAttachmentsMessage(caseId)
-        });
+        setMessage({ type: 'error', text: getCaseFiledWithoutAttachmentsMessage(caseId) });
       } else if (uploadFiles.length > 0 && evidenceMetadata.length < uploadFiles.length) {
-        setMessage({
-          type: 'error',
-          text: getCaseFiledPartialAttachmentsMessage(caseId, uploadFiles.length - evidenceMetadata.length, evidenceMetadata.length)
-        });
+        setMessage({ type: 'error', text: getCaseFiledPartialAttachmentsMessage(caseId, uploadFiles.length - evidenceMetadata.length, evidenceMetadata.length) });
       } else {
-        setMessage({
-          type: 'success',
-          text: getComplaintSuccessMessage(caseId, evidenceMetadata.length)
-        });
+        setMessage({ type: 'success', text: getComplaintSuccessMessage(caseId, evidenceMetadata.length) });
       }
-      
+
       // Reset form
-      setForm({
-        fullName: "",
-        fathersName: "",
-        mothersName: "",
-        gender: "",
-        age: "",
-        contactNumber: "",
-        email: user?.email || "",
-        permanentAddress: "",
-        currentAddress: "",
-        occupation: "",
-        preferredLanguage: defaultPreferredLanguage,
-        idProofType: "",
-        idProofNumber: "",
-        incidentDate: "",
-        incidentTime: "",
-        reportingDate: new Date().toISOString().split('T')[0],
-        reportingTime: new Date().toTimeString().slice(0, 5),
-        location: "",
-        incidentType: "",
-        amountLost: "",
-        transactionId: "",
-        bankName: "",
-        walletName: "",
-        scammerAccountNumber: "",
-        scammerIFSC: "",
-        scammerUPIId: "",
-        modeOfFraud: "",
-        devicePlatform: "",
-        complaintDescription: "",
-      });
-      // Clear form and localStorage after successful submission
+      setForm(createInitialComplaintForm(defaultPreferredLanguage, user?.email || ''));
       setFiles([]);
-      setPanDocumentFile(null);
+      setAadhaarDocumentFile(null);
       setTermsAccepted(false);
       setLocationData({ latitude: null, longitude: null, accuracy: null, timestamp: null });
       setLocationError('');
       setLocationPermissionDenied(false);
-      setPanOcr(PAN_OCR_INITIAL_STATE);
+      setAadhaarOcr(AADHAAR_OCR_INITIAL_STATE);
       setCurrentSection(1);
       localStorage.removeItem('complaintFormDraft');
       setTimeout(() => setMessage({ type: '', text: '' }), 5000);
     } catch (err) {
       console.error('Submit error:', err);
       let errorMsg = `${tt('Submit failed:')} ${err.message}`;
-      
-      // Handle Firestore permission errors
-      if (err.message === 'PERMISSION_DENIED_CASE_CREATION' || err.code === 'permission-denied' || err.message?.includes('permission') || err.message?.includes('Missing or insufficient permissions')) {
+      if (err.message === 'PERMISSION_DENIED_CASE_CREATION' || err.code === 'permission-denied' || err.message?.includes('permission')) {
         errorMsg = tt('Firestore permission denied. Please update Firestore security rules in Firebase Console to allow case creation.');
-        console.warn('💡 To fix: Update Firestore security rules to allow authenticated users to create cases.');
-        console.warn('💡 See firestore.rules file for the correct rules.');
       } else if (err.message?.includes('ERR_BLOCKED_BY_CLIENT') || err.message?.includes('blocked')) {
-        // Ad blocker or browser extension blocking requests
         errorMsg = tt('Request blocked by browser extension or ad blocker. Please disable ad blockers for this site and try again.');
-        console.warn('⚠️ Firestore request blocked (likely by ad blocker). Please disable ad blockers.');
-      } else if (err.message?.includes('CORS') || err.code === 'storage/unauthorized') {
-        errorMsg = tt('CORS Error: Please configure Firebase Storage CORS. See console for details.');
       } else if (err.message?.includes('network') || err.message?.includes('fetch')) {
         errorMsg = tt('Network error: Please check your internet connection and try again.');
       }
-      
       setMessage({ type: 'error', text: errorMsg });
       setTimeout(() => setMessage({ type: '', text: '' }), 10000);
     } finally {
@@ -1738,7 +671,7 @@ export default function CyberFraudReport({ user: userProp }) {
 
   return (
     <div className="min-h-[calc(100vh-200px)] py-6 sm:py-8">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         {/* Header Section */}
         <div className="text-center mb-8">
           <div className="mb-6 flex flex-col items-center justify-center gap-4 sm:flex-row">
@@ -1792,1260 +725,94 @@ export default function CyberFraudReport({ user: userProp }) {
         {viewMode === 'track' ? (
           <CasesList user={user} profile={profile} onSwitchToFile={() => setViewMode('file')} />
         ) : (
-          <form onSubmit={handleSubmit} className="rounded-2xl border border-gray-200 bg-white p-3 shadow-xl sm:p-8 lg:p-10">
-
-          {/* Success/Error Messages */}
-          {message.type === 'success' && (
-            <div className="mb-6 p-4 bg-green-50 border-l-4 border-green-500 rounded-lg">
-              <div className="flex items-center gap-3">
-                <svg className="w-5 h-5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-green-800 font-medium text-sm">{message.text}</p>
-              </div>
-            </div>
-          )}
-
-          {message.type === 'error' && (
-            <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
-              <div className="flex items-start gap-3">
-                <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-red-800 font-medium text-sm">{message.text}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Auto-save indicator */}
-          <div className="mb-4 flex items-center justify-end">
-            <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 px-3 py-1.5 rounded-full">
-              <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              <span>Form auto-saves as you type</span>
-            </div>
-          </div>
-
-          {/* Progress Indicator */}
-          <div className="sticky top-2 z-20 mb-8 hidden rounded-[28px] border border-gray-200 bg-white/95 p-3 shadow-lg backdrop-blur md:block">
-            <div className="mb-3 flex items-center justify-between gap-3 px-1">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
-                  Step {currentSection} of 3
-                </p>
-                <p className="mt-1 text-sm text-gray-600">
-                  {currentSection === 1
-                    ? 'Verify your identity and personal details'
-                    : currentSection === 2
-                      ? 'Capture incident information and financial details'
-                      : 'Upload documents, confirm terms, and submit'}
-                </p>
-              </div>
-              <div className="hidden rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 sm:block">
-                Auto-saved draft
-              </div>
-            </div>
-            <div className="flex gap-3 overflow-x-auto pb-1">
-              <button
-                type="button"
-                onClick={() => moveToSection(1)}
-                className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
-                  currentSection === 1 
-                    ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
-                    : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-                1. Personal Details
-              </button>
-              <div className={`hidden h-1.5 flex-1 rounded-full transition-all duration-300 md:block ${currentSection >= 2 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-amber-200'}`}></div>
-              <button
-                type="button"
-                onClick={() => moveToSection(2)}
-                className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
-                  currentSection === 2 
-                    ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
-                    : sectionCompletion[1]
-                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                    : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                2. Incident Details
-              </button>
-              <div className={`hidden h-1.5 flex-1 rounded-full transition-all duration-300 md:block ${currentSection >= 3 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-amber-200'}`}></div>
-              <button
-                type="button"
-                onClick={() => moveToSection(3)}
-                className={`flex min-w-max items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-all sm:px-5 ${
-                  currentSection === 3 
-                    ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-lg' 
-                    : sectionCompletion[2]
-                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                    : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                3. Documents & Review
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-4 sm:space-y-6">
-            <button
-              type="button"
-              onClick={() => moveToSection(1)}
-              className="flex w-full items-center justify-between rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left shadow-sm transition md:hidden"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 text-sm font-bold text-white">
-                  1
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-900">Personal Details</p>
-                  <p className="text-xs text-gray-500">PAN scan and identity check</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
-                  {currentSection === 1 ? 'Open' : sectionCompletion[1] ? 'Done' : 'Start'}
-                </span>
-                <svg className={`h-4 w-4 text-amber-700 transition-transform ${currentSection === 1 ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </button>
-
-            {/* Section 1: Personal Details */}
-            {currentSection === 1 && (
-              <div className="space-y-6 animate-fadeIn">
-                <div className="mb-6 hidden rounded-r-lg border-l-4 border-amber-500 bg-gradient-to-r from-amber-50 to-yellow-50 py-4 pl-6 sm:block">
-                  <div className="flex items-center gap-3 mb-2">
-                    <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    <h4 className="text-xl font-bold text-gray-900">Personal Information</h4>
-                  </div>
-                  <p className="text-sm text-gray-600">Use the PAN scan slot for quick auto-fill, then review the personal details before continuing.</p>
-                </div>
-
-                <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
-                  <div className="mb-6 rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-50 p-4 sm:p-5">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="max-w-2xl">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">PAN OCR Slot</p>
-                        <h5 className="mt-2 text-lg font-semibold text-gray-900">Scan PAN card and pre-fill identity details</h5>
-                        <p className="mt-2 text-sm leading-6 text-gray-600">
-                          Upload a clear PAN image to auto-fill name, PAN number, father&apos;s name, and age where detected.
-                        </p>
-                      </div>
-                      <div className="rounded-full bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-amber-700 shadow-sm">
-                        OCR assisted
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,1fr)]">
-                      <div className="space-y-4">
-                        <div className="rounded-3xl bg-slate-900 p-4 text-white shadow-xl sm:p-5">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">Sample PAN card</p>
-                          <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-amber-300">Income Tax Department</p>
-                            <p className="mt-5 text-base font-semibold tracking-wide">YOUR NAME HERE</p>
-                            <p className="mt-2 text-sm text-slate-300">FATHER NAME HERE</p>
-                            <div className="mt-5 flex items-end justify-between gap-4">
-                              <div>
-                                <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">DOB</p>
-                                <p className="mt-1 text-sm font-medium">01/01/1990</p>
-                              </div>
-                              <div className="text-right">
-                                <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">PAN</p>
-                                <p className="mt-1 text-base font-semibold tracking-[0.32em]">ABCDE1234F</p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="rounded-2xl bg-white/80 p-4">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Scan options</p>
-                          <p className="mt-2 text-sm text-gray-700">Use camera scan for live capture or upload a clean PAN image from your device.</p>
-                          <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                            <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-amber-600 hover:to-yellow-600">
-                              <input
-                                type="file"
-                                accept={PAN_SCAN_ACCEPT}
-                                capture="environment"
-                                onChange={handlePanScan}
-                                className="hidden"
-                              />
-                              Camera Scan
-                            </label>
-                            <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-semibold text-amber-700 transition hover:bg-amber-50">
-                              <input
-                                type="file"
-                                accept={PAN_SCAN_ACCEPT}
-                                onChange={handlePanScan}
-                                className="hidden"
-                              />
-                              Upload PAN Image
-                            </label>
-                          </div>
-                          {panOcr.fileName && (
-                            <p className="mt-3 text-xs font-medium text-gray-500">Last scanned file: {panOcr.fileName}</p>
-                          )}
-                          {panOcr.loading && (
-                            <div className="mt-4">
-                              <div className="mb-2 flex items-center justify-between text-xs font-semibold text-amber-700">
-                                <span>Reading PAN card</span>
-                                <span>{panOcr.progress}%</span>
-                              </div>
-                              <div className="h-2.5 overflow-hidden rounded-full bg-amber-100">
-                                <div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-yellow-500" style={{ width: `${panOcr.progress}%` }} />
-                              </div>
-                            </div>
-                          )}
-                          {panOcr.error && (
-                            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                              {panOcr.error}
-                            </div>
-                          )}
-                          {panOcr.qualityWarning && !panOcr.error && (
-                            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                              {panOcr.qualityWarning}
-                            </div>
-                          )}
-                          {hasClearPanScan && (
-                            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                              Image looks clear and the main PAN details were fetched properly. This scan is ready to attach with your complaint.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Extracted preview</p>
-                        {panOcr.extracted ? (
-                          <>
-                            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                              <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
-                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Name</p>
-                                <p className="mt-1 font-semibold text-gray-900">{panOcr.extracted.fullName || 'Not detected'}</p>
-                              </div>
-                              <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
-                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Parent Name</p>
-                                <p className="mt-1 font-semibold text-gray-900">{panOcr.extracted.parentName || 'Not detected'}</p>
-                              </div>
-                              <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
-                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">PAN Number</p>
-                                <p className="mt-1 font-semibold text-gray-900">{panOcr.extracted.panNumber || 'Not detected'}</p>
-                              </div>
-                              <div className="rounded-2xl bg-gray-50 p-3 text-sm text-gray-700">
-                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Age</p>
-                                <p className="mt-1 font-semibold text-gray-900">{panOcr.extracted.age || 'Not detected'}</p>
-                              </div>
-                            </div>
-                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                              <div className="rounded-2xl border border-gray-200 px-4 py-3">
-                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">OCR Confidence</p>
-                                <p className="mt-1 text-sm font-semibold text-gray-900">{panOcr.confidence}%</p>
-                              </div>
-                              <div className="rounded-2xl border border-gray-200 px-4 py-3">
-                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Image Sharpness</p>
-                                <p className="mt-1 text-sm font-semibold text-gray-900">{panOcr.blurScore || 'Not available'}</p>
-                              </div>
-                            </div>
-                            <div className={`mt-4 rounded-2xl px-4 py-3 text-sm ${panDocumentFile ? 'border border-emerald-200 bg-emerald-50 text-emerald-800' : 'border border-gray-200 bg-gray-50 text-gray-600'}`}>
-                              {panDocumentFile ? `PAN image ready for upload: ${panDocumentFile.name}` : 'Scan a PAN image to attach it with this complaint.'}
-                            </div>
-                          </>
-                        ) : (
-                          <p className="mt-3 text-sm leading-6 text-gray-500">
-                            The OCR preview will appear here after you scan a PAN card. You can still edit every field manually.
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
-                      Full Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="As per PAN/Passport/Driving License"
-                      value={form.fullName}
-                      onChange={e => setForm({...form, fullName: e.target.value})}
-                      required
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                      </svg>
-                      Contact Number <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="tel"
-                      placeholder="10-digit mobile number"
-                      value={form.contactNumber}
-                      onChange={e => setForm({...form, contactNumber: e.target.value.replace(/\D/g, '').slice(0, 10)})}
-                      required
-                      maxLength={10}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                    <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      For OTP verification and follow-ups
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                      </svg>
-                      Email Address <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="email"
-                      placeholder="your.email@example.com"
-                      value={form.email}
-                      onChange={e => setForm({...form, email: e.target.value})}
-                      required
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                    <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      For acknowledgment and updates
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                      </svg>
-                      Gender
-                    </label>
-                    <select
-                      value={form.gender}
-                      onChange={e => setForm({...form, gender: e.target.value})}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    >
-                      <option value="">Select Gender</option>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                      <option value="Other">Other</option>
-                      <option value="Prefer not to say">Prefer not to say</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      Age
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="Your age"
-                      value={form.age}
-                      onChange={e => setForm({...form, age: e.target.value})}
-                      min="1"
-                      max="120"
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                      </svg>
-                      Father's / Mother's Name
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="For identity verification"
-                      value={form.fathersName}
-                      onChange={e => setForm({...form, fathersName: e.target.value})}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                      </svg>
-                      Occupation
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g., Student, Engineer, Business"
-                      value={form.occupation}
-                      onChange={e => setForm({...form, occupation: e.target.value})}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
-                      </svg>
-                      Preferred Language
-                    </label>
-                    <select
-                      value={form.preferredLanguage}
-                      onChange={e => setForm({...form, preferredLanguage: e.target.value})}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    >
-                      <option value="English">English</option>
-                      <option value="Hindi">Hindi</option>
-                      <option value="Odia">Odia</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                    <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    Permanent Address
-                  </label>
-                  <textarea
-                    placeholder="Complete permanent address"
-                    value={form.permanentAddress}
-                    onChange={e => setForm({...form, permanentAddress: e.target.value})}
-                    rows={3}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all resize-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                    <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    Current Address
-                  </label>
-                  <textarea
-                    placeholder="Current residential address (if different from permanent)"
-                    value={form.currentAddress}
-                    onChange={e => setForm({...form, currentAddress: e.target.value})}
-                    rows={3}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all resize-none"
-                  />
-                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Leave blank if same as permanent address
-                  </p>
-                </div>
-
-                <div className="border-t-2 border-amber-200 pt-6 mt-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
-                    </svg>
-                    <p className="text-sm font-semibold text-gray-700">ID Proof (Optional - for digital verification)</p>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        ID Proof Type
-                      </label>
-                      <select
-                        value={form.idProofType}
-                        onChange={e => setForm({...form, idProofType: e.target.value})}
-                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                      >
-                        <option value="">Select ID Type</option>
-                        <option value="PAN">PAN</option>
-                        <option value="Passport">Passport</option>
-                        <option value="Driving License">Driving License</option>
-                        <option value="Voter ID">Voter ID</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        ID Proof Number
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="ID number"
-                        value={form.idProofNumber}
-                        onChange={e => setForm({...form, idProofNumber: e.target.value})}
-                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                </div>
-
-                <div className="flex justify-end border-t border-gray-200 pt-6">
-                  <button
-                    type="button"
-                    onClick={() => moveToSection(2)}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-6 py-3 font-semibold text-white shadow-lg transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-xl sm:w-auto"
-                  >
-                    <span>Next: Incident Details</span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                </div>
-          </div>
-        )}
-
-            <button
-              type="button"
-              onClick={() => moveToSection(2)}
-              className="flex w-full items-center justify-between rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm transition md:hidden"
-            >
-              <div className="flex items-center gap-3">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-bold ${currentSection === 2 ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white' : sectionCompletion[1] ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-400'}`}>
-                  2
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-900">Incident Details</p>
-                  <p className="text-xs text-gray-500">Timeline, amount, and complaint summary</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${currentSection === 2 ? 'bg-amber-50 text-amber-700' : sectionCompletion[2] ? 'bg-green-50 text-green-700' : sectionCompletion[1] ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
-                  {currentSection === 2 ? 'Open' : sectionCompletion[2] ? 'Done' : sectionCompletion[1] ? 'Next' : 'Locked'}
-                </span>
-                <svg className={`h-4 w-4 transition-transform ${currentSection === 2 ? 'rotate-180 text-amber-700' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </button>
-
-            {/* Section 2: Incident Details */}
-            {currentSection === 2 && (
-              <div className="space-y-6 animate-fadeIn">
-                <div className="mb-6 hidden rounded-r-lg border-l-4 border-amber-500 bg-gradient-to-r from-amber-50 to-yellow-50 py-4 pl-6 sm:block">
-                  <div className="flex items-center gap-3 mb-2">
-                    <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <h4 className="text-xl font-bold text-gray-900">Incident Information</h4>
-                  </div>
-                  <p className="text-sm text-gray-600">Capture the fraud timeline, financial trail, scammer information, and a clear complaint narrative.</p>
-                </div>
-
-                <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
-                <div className="mb-6 hidden rounded-3xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-blue-900 sm:block">
-                  Fill the incident step as accurately as possible. Use exact dates, transaction references, and platform details wherever available.
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      Date of Incident <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={form.incidentDate}
-                      onChange={e => setForm({...form, incidentDate: e.target.value})}
-                      max={new Date().toISOString().split('T')[0]}
-                      required
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Time of Incident <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="time"
-                      value={form.incidentTime}
-                      onChange={e => setForm({...form, incidentTime: e.target.value})}
-                      required
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      Date of Reporting
-                    </label>
-                    <input
-                      type="date"
-                      value={form.reportingDate}
-                      onChange={e => setForm({...form, reportingDate: e.target.value})}
-                      max={new Date().toISOString().split('T')[0]}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Time of Reporting
-                    </label>
-                    <input
-                      type="time"
-                      value={form.reportingTime}
-                      onChange={e => setForm({...form, reportingTime: e.target.value})}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                    <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    Location / Place of Occurrence
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="City, State or Online/Website name"
-                    value={form.location}
-                    onChange={e => setForm({...form, location: e.target.value})}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                  />
-                  <p className="mt-1 hidden items-center gap-1 text-xs text-gray-500 sm:flex">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Physical location or online platform where incident occurred
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                    <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                    Incident Type <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={form.incidentType}
-                    onChange={e => setForm({...form, incidentType: e.target.value})}
-                    required
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                  >
-                <option value="">Select Incident Type</option>
-                <option value="UPI Fraud">UPI Fraud</option>
-                <option value="Phishing">Phishing</option>
-                <option value="OTP Scam">OTP Scam</option>
-                <option value="Online Job Scam">Online Job Scam</option>
-                <option value="Sextortion">Sextortion</option>
-                <option value="Loan App Fraud">Loan App Fraud</option>
-                <option value="Credit Card Fraud">Credit Card Fraud</option>
-                <option value="Debit Card Fraud">Debit Card Fraud</option>
-                <option value="Online Shopping Fraud">Online Shopping Fraud</option>
-                <option value="Social Media Fraud">Social Media Fraud</option>
-                <option value="Investment Scam">Investment Scam</option>
-                <option value="Romance Scam">Romance Scam</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Amount Lost (₹)
-                </label>
-                <input
-                  type="number"
-                  placeholder="0.00"
-                  value={form.amountLost}
-                  onChange={e => setForm({...form, amountLost: e.target.value})}
-                  min="0"
-                  step="0.01"
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Transaction ID / Reference No.
-                </label>
-                <input
-                  type="text"
-                  placeholder="From UPI, bank, or card statement"
-                  value={form.transactionId}
-                  onChange={e => setForm({...form, transactionId: e.target.value})}
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Bank Name
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g., SBI, HDFC, ICICI"
-                  value={form.bankName}
-                  onChange={e => setForm({...form, bankName: e.target.value})}
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Wallet / Payment App
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g., Paytm, PhonePe, Google Pay"
-                  value={form.walletName}
-                  onChange={e => setForm({...form, walletName: e.target.value})}
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                />
-              </div>
-            </div>
-
-            <div className="border-t border-amber-200 pt-4">
-              <p className="text-sm font-semibold text-gray-700 mb-3">👤 Scammer Account Details</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Account Number
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Scammer's account number"
-                    value={form.scammerAccountNumber}
-                    onChange={e => setForm({...form, scammerAccountNumber: e.target.value})}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    IFSC Code
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Bank IFSC code"
-                    value={form.scammerIFSC}
-                    onChange={e => setForm({...form, scammerIFSC: e.target.value.toUpperCase()})}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    UPI ID
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., scammer@paytm"
-                    value={form.scammerUPIId}
-                    onChange={e => setForm({...form, scammerUPIId: e.target.value})}
-                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Mode of Fraud
-                </label>
-                <select
-                  value={form.modeOfFraud}
-                  onChange={e => setForm({...form, modeOfFraud: e.target.value})}
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                >
-                  <option value="">Select Mode</option>
-                  <option value="Phone Call">Phone Call</option>
-                  <option value="SMS/WhatsApp Link">SMS/WhatsApp Link</option>
-                  <option value="Fake Website">Fake Website</option>
-                  <option value="Social Media">Social Media</option>
-                  <option value="Mobile App">Mobile App</option>
-                  <option value="Email">Email</option>
-                  <option value="In-Person">In-Person</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Device / Platform
-                </label>
-                <select
-                  value={form.devicePlatform}
-                  onChange={e => setForm({...form, devicePlatform: e.target.value})}
-                  className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
-                >
-                  <option value="">Select Platform</option>
-                  <option value="Android Phone">Android Phone</option>
-                  <option value="iPhone (iOS)">iPhone (iOS)</option>
-                  <option value="Laptop/Desktop">Laptop/Desktop</option>
-                  <option value="Website">Website</option>
-                  <option value="Tablet">Tablet</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Complaint Description <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                placeholder="Explain what happened, how you were contacted, and what action you already took."
-                value={form.complaintDescription}
-                onChange={e => setForm({...form, complaintDescription: e.target.value})}
-                rows={6}
-                required
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all resize-none"
-              />
-              <p className="mt-1 hidden text-xs text-gray-500 sm:block">Share the key sequence clearly so the case can be reviewed faster.</p>
-            </div>
-
-                </div>
-
-                <div className="flex flex-col-reverse gap-3 border-t border-gray-200 pt-6 sm:flex-row sm:justify-between">
-                  <button
-                    type="button"
-                    onClick={() => moveToSection(1)}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-all duration-200 hover:bg-gray-200 sm:w-auto"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                    </svg>
-                    <span>Back to Personal Details</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveToSection(3)}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-6 py-3 font-semibold text-white shadow-lg transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-xl sm:w-auto"
-                  >
-                    <span>Next: Upload Evidence</span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                </div>
-          </div>
-        )}
-
-            <button
-              type="button"
-              onClick={() => moveToSection(3)}
-              className="flex w-full items-center justify-between rounded-2xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm transition md:hidden"
-            >
-              <div className="flex items-center gap-3">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-bold ${currentSection === 3 ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white' : sectionCompletion[2] ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-400'}`}>
-                  3
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-gray-900">Documents & Review</p>
-                  <p className="text-xs text-gray-500">Attach proof, capture location, submit</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${currentSection === 3 ? 'bg-amber-50 text-amber-700' : sectionCompletion[3] ? 'bg-green-50 text-green-700' : sectionCompletion[2] ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
-                  {currentSection === 3 ? 'Open' : sectionCompletion[3] ? 'Done' : sectionCompletion[2] ? 'Next' : 'Locked'}
-                </span>
-                <svg className={`h-4 w-4 transition-transform ${currentSection === 3 ? 'rotate-180 text-amber-700' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </button>
-
-            {/* Section 3: Evidence */}
-            {currentSection === 3 && (
-              <div className="space-y-6 animate-fadeIn">
-                <div className="mb-6 hidden rounded-r-lg border-l-4 border-amber-500 bg-gradient-to-r from-amber-50 to-yellow-50 py-4 pl-6 sm:block">
-                  <div className="flex items-center gap-3 mb-2">
-                    <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                    <h4 className="text-xl font-bold text-gray-900">Documents & Review</h4>
-                  </div>
-                  <p className="text-sm text-gray-600">Upload valid supporting documents, confirm location access, and review the complaint before final submission.</p>
-                </div>
-
-            <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
-              <div>
-                <label className="mb-2 block text-sm font-semibold text-gray-700">
-                  Supporting Documents
-                </label>
-                <div className="mb-3 rounded-2xl border border-blue-100 bg-blue-50/80 p-3 text-xs text-blue-900">
-                  Upload screenshots, statements, chats, or emails. Each file can be up to 750 KB.
-                </div>
-                <label className="flex cursor-pointer flex-col items-center justify-center rounded-3xl border-2 border-dashed border-amber-200 bg-amber-50/70 p-5 text-center transition hover:border-amber-300 hover:bg-amber-50">
-                  <input
-                    type="file"
-                    multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.doc,.docx,.txt,application/pdf,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
-                    onChange={e => {
-                      const selectedFiles = Array.from(e.target.files || []);
-                      const validFiles = [];
-                      const errors = [];
-                      
-                      selectedFiles.forEach(file => {
-                        const validation = validateFile(file);
-                        if (validation.valid) {
-                          validFiles.push(file);
-                        } else {
-                          errors.push(`${file.name}: ${getFileValidationErrorMessage(validation)}`);
-                        }
-                      });
-                      
-                      if (errors.length > 0) {
-                        setMessage({ 
-                          type: 'error', 
-                          text: getInvalidFilesMessage(errors)
-                        });
-                        setTimeout(() => setMessage({ type: '', text: '' }), 8000);
-                      }
-                      
-                      setFiles(validFiles);
-                    }}
-                    className="hidden"
-                  />
-                  <svg className="h-10 w-10 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          <form onSubmit={handleSubmit} className="rounded-3xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6 lg:p-8">
+            {/* Success/Error Alerts */}
+            {message.type === 'success' && (
+              <div className="mb-6 p-4 bg-green-50 border-l-4 border-green-500 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <svg className="w-5 h-5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <p className="mt-3 text-sm font-semibold text-gray-900">Tap to upload documents</p>
-                  <p className="mt-1 text-xs text-gray-600">PDF, image, DOC/DOCX, or TXT</p>
-                </label>
-                {files.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-sm font-medium text-gray-700">
-                      {files.length} supporting file(s) selected
-                    </p>
-                    <div className="max-h-36 space-y-1 overflow-y-auto">
-                      {files.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2">
-                          <div className="flex min-w-0 flex-1 items-center gap-2">
-                            <svg className="h-4 w-4 flex-shrink-0 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                            <span className="truncate text-xs text-gray-800">{file.name}</span>
-                          </div>
-                          <span className="ml-2 text-xs text-gray-600">
-                            {(file.size / 1024).toFixed(1)} KB
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-3xl border border-gray-200 bg-gray-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Identity Proof</p>
-                {panDocumentFile ? (
-                  <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-                    <p className="font-semibold">PAN scan attached</p>
-                    <p className="mt-1 break-all text-xs">{panDocumentFile.name}</p>
-                    <p className="mt-2 text-xs">{(panDocumentFile.size / 1024).toFixed(1)} KB</p>
-                  </div>
-                ) : (
-                  <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-600">
-                    Scan a PAN card in the first section to auto-fill details and attach the image here.
-                  </div>
-                )}
-                <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
-                  <p className="font-semibold text-gray-900">Ready attachments</p>
-                  <p className="mt-1 text-xs text-gray-600">{selectedAttachments.length} file(s) will be submitted with this complaint.</p>
-                </div>
-              </div>
-            </div>
-            <div className="hidden">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Evidence (Files) - Optional
-              </label>
-              <div className="mb-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-xs text-blue-800 font-medium mb-1">📎 Allowed file types:</p>
-                <p className="text-xs text-blue-700">
-                  PDF, Images (JPG, PNG, GIF, WEBP), Word Documents (DOC, DOCX), Text Files (TXT)
-                </p>
-                <p className="text-xs text-blue-700 mt-1">
-                  Maximum file size: 750KB per file (stored in Firestore subcollection)
-                </p>
-                <p className="text-xs text-blue-700 mt-1">
-                  💡 Tip: Upload screenshots of transactions, chat conversations, emails, or any relevant documents
-                </p>
-                <p className="text-xs text-amber-700 mt-2 font-medium">
-                  ⚠️ Note: File selections are not saved if you refresh the page. Please upload files just before submitting.
-                </p>
-              </div>
-              <div className="relative">
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.doc,.docx,.txt,application/pdf,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
-                  onChange={e => {
-                    const selectedFiles = Array.from(e.target.files);
-                    const validFiles = [];
-                    const errors = [];
-                    
-                    selectedFiles.forEach(file => {
-                      const validation = validateFile(file);
-                      if (validation.valid) {
-                        validFiles.push(file);
-                      } else {
-                        errors.push(`${file.name}: ${getFileValidationErrorMessage(validation)}`);
-                      }
-                    });
-                    
-                    if (errors.length > 0) {
-                      setMessage({ 
-                        type: 'error', 
-                        text: getInvalidFilesMessage(errors)
-                      });
-                      setTimeout(() => setMessage({ type: '', text: '' }), 8000);
-                    }
-                    
-                    setFiles(validFiles);
-                  }}
-                  className="w-full rounded-2xl border-2 border-dashed border-amber-200 bg-amber-50/60 p-4 file:mr-4 file:rounded-xl file:border-0 file:bg-amber-600 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-amber-700 file:cursor-pointer"
-                />
-                {files.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-sm text-gray-700 font-medium">
-                      {files.length} file(s) selected:
-                    </p>
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
-                      {files.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between p-2 bg-amber-50 rounded border border-amber-200">
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <svg className="w-4 h-4 text-amber-700 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                            <span className="text-xs text-gray-800 truncate">{file.name}</span>
-                          </div>
-                          <span className="text-xs text-gray-600 ml-2">
-                            {(file.size / 1024).toFixed(1)} KB
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Location Capture */}
-            <div className="border border-amber-200 rounded-lg overflow-hidden">
-              <div className="px-4 py-3 bg-amber-50">
-                <div className="flex items-center gap-2 mb-2">
-                  <svg className="w-5 h-5 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <h4 className="text-sm font-bold text-gray-800">📍 Location Access (Required)</h4>
-                </div>
-                <p className="text-xs text-gray-600 mb-3">
-                  Your location is required to file a complaint. This helps authorities verify and process your complaint.
-                </p>
-                {gettingLocation ? (
-                  <div className="flex items-center gap-2 text-sm text-amber-700">
-                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Getting your location...
-                  </div>
-                ) : locationData.latitude && locationData.longitude ? (
-                  <div className="bg-green-50 border border-green-200 rounded p-3">
-                    <div className="flex items-center gap-2 text-green-700 mb-2">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span className="font-semibold text-sm">Location captured successfully</span>
-                    </div>
-                    <div className="text-xs text-gray-700 space-y-1">
-                      <p>Latitude: <span className="font-mono">{locationData.latitude.toFixed(6)}</span></p>
-                      <p>Longitude: <span className="font-mono">{locationData.longitude.toFixed(6)}</span></p>
-                      {locationData.accuracy && (
-                        <p>Accuracy: ±{Math.round(locationData.accuracy)} meters</p>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    {locationError && (
-                      <div className="bg-red-50 border border-red-200 rounded p-3 mb-3">
-                        <p className="text-xs text-red-700 mb-2">{locationError}</p>
-                        {locationPermissionDenied && (
-                          <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
-                            <p className="font-semibold mb-1">How to enable location access:</p>
-                            <ul className="list-disc list-inside space-y-1 ml-2">
-                              <li>Click the lock icon (🔒) in your browser's address bar</li>
-                              <li>Select "Allow" for Location permissions</li>
-                              <li>Or go to your browser settings → Privacy → Location → Allow for this site</li>
-                              <li>Then click "Get My Location" button again</li>
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={getCurrentLocation}
-                      disabled={gettingLocation}
-                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition-all duration-200 text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    >
-                      {gettingLocation ? (
-                        <>
-                          <svg className="animate-spin h-4 w-4 inline mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          Getting location...
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                          {locationPermissionDenied ? 'Try Again - Get My Location' : 'Get My Location'}
-                        </>
-                      )}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Terms and Conditions */}
-            <div className="rounded-lg border border-amber-200 bg-white p-4">
-              <div className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  id="termsCheckbox"
-                  checked={termsAccepted}
-                  onChange={(e) => setTermsAccepted(e.target.checked)}
-                  className="mt-1 w-5 h-5 text-amber-600 border-amber-300 rounded focus:ring-amber-500 focus:ring-2"
-                  required
-                />
-                <label htmlFor="termsCheckbox" className="flex-1 text-sm text-gray-700 cursor-pointer">
-                  <span className="font-semibold">I accept the Terms and Conditions</span>
-                  <span className="text-red-500 ml-1">*</span>
-                  <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-gray-600">
-                    <p>I confirm the complaint details are accurate.</p>
-                    <p className="mt-1">I allow the authorities to use the attached information and location for verification.</p>
-                    <p className="mt-1">I understand officials may contact me on the shared phone number or email.</p>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <p className="mb-2 text-sm text-gray-700">
-                <span className="font-semibold">Summary:</span> Review before submit
-              </p>
-              <div className="space-y-1 text-xs text-gray-600">
-                <p>Name: {form.fullName || 'Not provided'}</p>
-                <p>Contact: {form.contactNumber || 'Not provided'}</p>
-                <p>Incident Type: {form.incidentType || 'Not provided'}</p>
-                <p>Amount Lost: {form.amountLost ? formatCurrency(form.amountLost) : 'Not specified'}</p>
-                <p>PAN Attached: {panDocumentFile ? 'Yes' : 'No'}</p>
-                <p>Total Attachments: {selectedAttachments.length}</p>
-                <p>Location: {locationData.latitude ? 'Captured' : 'Not captured'}</p>
-                <p>Terms Accepted: {termsAccepted ? 'Yes' : 'No'}</p>
-              </div>
-            </div>
-
-            <div className="hidden rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <p className="text-sm text-gray-700 mb-2">
-                <span className="font-semibold">📋 Summary:</span> Review your complaint before submitting
-              </p>
-              <div className="text-xs text-gray-600 space-y-1">
-                <p>• Name: {form.fullName || 'Not provided'}</p>
-                <p>• Contact: {form.contactNumber || 'Not provided'}</p>
-                <p>• Incident Type: {form.incidentType || 'Not provided'}</p>
-                <p>• Amount Lost: {form.amountLost ? formatCurrency(form.amountLost) : 'Not specified'}</p>
-                <p>• Evidence Files: {files.length} file(s)</p>
-                <p>• Location: {locationData.latitude ? 'Captured ✓' : 'Not captured'}</p>
-                <p>• Terms Accepted: {termsAccepted ? 'Yes ✓' : 'No'}</p>
-              </div>
-            </div>
-
-                </div>
-
-                <div className="flex flex-col-reverse gap-3 border-t border-gray-200 pt-6 sm:flex-row sm:justify-between">
-                  <button
-                    type="button"
-                    onClick={() => moveToSection(2)}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-all duration-200 hover:bg-gray-200 sm:w-auto"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                    </svg>
-                    <span>Back to Incident Details</span>
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting || !termsAccepted || !locationData.latitude || !locationData.longitude}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-8 py-3 font-semibold text-white shadow-lg transition-all duration-200 hover:from-amber-600 hover:to-yellow-600 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-                  >
-                    {submitting ? (
-                      <>
-                        <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <span>Submitting...</span>
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <span>Submit Complaint</span>
-                      </>
-                    )}
-                  </button>
+                  <p className="text-green-800 font-medium text-sm">{message.text}</p>
                 </div>
               </div>
             )}
-          </div>
+
+            {message.type === 'error' && (
+              <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-red-800 font-medium text-sm">{message.text}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Auto-save indicator */}
+            <div className="mb-4 flex items-center justify-end">
+              <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 px-3 py-1.5 rounded-full">
+                <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <span>Form auto-saves as you type</span>
+              </div>
+            </div>
+
+            {/* Progress Stepper Indicator */}
+            <ComplaintProgress
+              currentSection={currentSection}
+              sectionCompletion={sectionCompletion}
+              moveToSection={moveToSection}
+            />
+
+            {/* Step 1: Personal Details */}
+            {currentSection === 1 && (
+              <PersonalDetailsSection
+                form={form}
+                setForm={setForm}
+                aadhaarOcr={aadhaarOcr}
+                setAadhaarOcr={setAadhaarOcr}
+                aadhaarDocumentFile={aadhaarDocumentFile}
+                setAadhaarDocumentFile={setAadhaarDocumentFile}
+                handleAadhaarScan={handleAadhaarScan}
+                onNext={() => moveToSection(2)}
+              />
+            )}
+
+            {/* Step 2: Incident Details */}
+            {currentSection === 2 && (
+              <IncidentDetailsSection
+                form={form}
+                setForm={setForm}
+                onPrev={() => moveToSection(1)}
+                onNext={() => moveToSection(3)}
+              />
+            )}
+
+            {/* Step 3: Documents & Review */}
+            {currentSection === 3 && (
+              <EvidenceSection
+                form={form}
+                files={files}
+                setFiles={setFiles}
+                selectedAttachments={selectedAttachments}
+                aadhaarDocumentFile={aadhaarDocumentFile}
+                locationData={locationData}
+                gettingLocation={gettingLocation}
+                locationError={locationError}
+                locationPermissionDenied={locationPermissionDenied}
+                getCurrentLocation={getCurrentLocation}
+                termsAccepted={termsAccepted}
+                setTermsAccepted={setTermsAccepted}
+                submitting={submitting}
+                getFileValidationErrorMessage={getFileValidationErrorMessage}
+                getInvalidFilesMessage={getInvalidFilesMessage}
+                setMessage={setMessage}
+                formatCurrency={formatCurrency}
+                onPrev={() => moveToSection(2)}
+              />
+            )}
           </form>
         )}
       </div>

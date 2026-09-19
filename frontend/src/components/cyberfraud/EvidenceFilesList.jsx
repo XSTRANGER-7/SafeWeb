@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../../../firebase.js";
+import { useI18n } from "../../../i18n/index.jsx";
 
 export default function EvidenceFilesList({ caseId, evidenceMetadata }) {
+  const { translateText: tt } = useI18n();
   const [evidenceFiles, setEvidenceFiles] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -35,8 +37,8 @@ export default function EvidenceFilesList({ caseId, evidenceMetadata }) {
 
   if (loading) {
     return (
-      <div className="border-t border-amber-200 pt-4">
-        <span className="text-xs text-gray-500">Loading evidence files...</span>
+      <div className="pt-4 border-t border-amber-200">
+        <span className="text-xs text-gray-500">{tt('Loading evidence files...')}</span>
       </div>
     );
   }
@@ -47,7 +49,7 @@ export default function EvidenceFilesList({ caseId, evidenceMetadata }) {
 
   const handleDownload = (fileItem) => {
     try {
-      const fileName = fileItem.name || 'file';
+      const fileName = fileItem.name || tt('File');
       const fileData = fileItem.data;
       const contentType = fileItem.contentType || 'application/octet-stream';
 
@@ -59,8 +61,8 @@ export default function EvidenceFilesList({ caseId, evidenceMetadata }) {
       if (fileData) {
         const byteCharacters = atob(fileData);
         const byteNumbers = new Array(byteCharacters.length);
-        for (let index = 0; index < byteCharacters.length; index += 1) {
-          byteNumbers[index] = byteCharacters.charCodeAt(index);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
         }
         const byteArray = new Uint8Array(byteNumbers);
         const blob = new Blob([byteArray], { type: contentType });
@@ -76,53 +78,53 @@ export default function EvidenceFilesList({ caseId, evidenceMetadata }) {
       }
     } catch (error) {
       console.error('Error downloading file:', error);
-      alert('Error downloading file. Please try again.');
+      alert(tt('Error downloading file. Please try again.'));
     }
   };
 
   return (
-    <div className="border-t border-amber-200 pt-4">
-      <span className="mb-2 block text-xs text-gray-600">Evidence Files ({evidenceFiles.length})</span>
+    <div className="pt-4 border-t border-amber-200">
+      <span className="text-xs text-gray-600 mb-2 block">{tt('Evidence Files')} ({evidenceFiles.length})</span>
       <div className="flex flex-wrap gap-2">
-        {evidenceFiles.map((fileItem, index) => {
-          const fileName = fileItem.name || `File ${index + 1}`;
+        {evidenceFiles.map((fileItem, idx) => {
+          const fileName = fileItem.name || `${tt('File')} ${idx + 1}`;
           const isUrl = typeof fileItem === 'string' || fileItem.url;
 
           if (isUrl) {
             return (
               <a
-                key={fileItem.id || index}
+                key={fileItem.id || idx}
                 href={fileItem.url || fileItem}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-100 px-3 py-1.5 text-xs text-amber-800 transition-colors hover:bg-amber-200"
+                className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs text-amber-800 transition-colors"
                 title={`Download ${fileName}`}
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                 </svg>
-                {fileName}
+                📄 {fileName}
               </a>
             );
           }
 
           return (
             <button
-              key={fileItem.id || index}
+              key={fileItem.id || idx}
               onClick={() => handleDownload(fileItem)}
-              className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-amber-300 bg-amber-100 px-3 py-1.5 text-xs text-amber-800 transition-colors hover:bg-amber-200"
+              className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg text-xs text-amber-800 transition-colors cursor-pointer"
               title={`Download ${fileName}`}
             >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
               </svg>
-              {fileName}
+              📄 {fileName}
             </button>
           );
         })}
       </div>
-      <p className="mt-2 text-xs text-gray-500">
-        Click files to download evidence stored in the complaint record.
+      <p className="text-xs text-gray-500 mt-2">
+        {tt('Click files to download evidence (stored in Firestore subcollection)')}
       </p>
     </div>
   );

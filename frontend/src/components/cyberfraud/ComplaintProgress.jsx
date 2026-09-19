@@ -85,7 +85,7 @@ export default function ComplaintProgress({ currentSection, sectionCompletion, m
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-900">Personal Details</p>
-              <p className="text-xs text-gray-500">PAN scan and identity check</p>
+              <p className="text-xs text-gray-500">Aadhaar scan and identity check</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
